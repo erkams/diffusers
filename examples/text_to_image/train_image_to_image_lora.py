@@ -44,7 +44,7 @@ from huggingface_hub import HfFolder, Repository, create_repo, whoami
 from torchvision import transforms
 from tqdm.auto import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
-
+from PIL import Image
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.13.0.dev0")
@@ -85,7 +85,7 @@ def parse_args():
     parser.add_argument(
         "--pretrained_model_name_or_path",
         type=str,
-        default=None,
+        default=None, 
         required=True,
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
@@ -406,19 +406,6 @@ def main():
         elif args.output_dir is not None:
             os.makedirs(args.output_dir, exist_ok=True)
 
-    # Load scheduler, tokenizer and models.
-    noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
-    tokenizer = CLIPTokenizer.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="tokenizer", revision=args.revision
-    )
-    text_encoder = CLIPTextModel.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision
-    )
-    vae = AutoencoderKL.from_pretrained(args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision)
-    vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1)
-    unet = UNet2DConditionModel.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
-    )
 
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
     # as these models are only used for inference, keeping weights in full precision is not required.
@@ -428,8 +415,25 @@ def main():
     elif accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
 
-    # Move unet, vae and text_encoder to device and cast to weight_dtype
+    
+    # Load scheduler, tokenizer and models.
+
+    unet = UNet2DConditionModel.from_pretrained(
+        args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
+    )
     unet.to(accelerator.device, dtype=weight_dtype)
+    
+    noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
+    tokenizer = CLIPTokenizer.from_pretrained(
+        args.pretrained_model_name_or_path, subfolder="tokenizer", revision=args.revision
+    )
+    text_encoder = CLIPTextModel.from_pretrained(
+        args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision
+    )
+    vae = AutoencoderKL.from_pretrained(args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision)
+    vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1)
+
+    # Move unet, vae and text_encoder to device and cast to weight_dtype
     vae.to(accelerator.device, dtype=weight_dtype)
     text_encoder.to(accelerator.device, dtype=weight_dtype)
 
@@ -490,7 +494,6 @@ def main():
             raise ImportError(
                 "Please install bitsandbytes to use 8-bit Adam. You can do so by running `pip install bitsandbytes`"
             )
-
         optimizer_cls = bnb.optim.AdamW8bit
     else:
         optimizer_cls = torch.optim.AdamW
@@ -577,10 +580,10 @@ def main():
         )
         return inputs.input_ids
 
-    # Preprocessing the datasets.
+    # Preprocessing the datasets. 
     train_transforms = transforms.Compose(
         [
-            transforms.Resize(args.resolution, interpolation=transforms.InterpolationMode.BILINEAR),
+            transforms.Resize((args.resolution, args.resolution), interpolation=transforms.InterpolationMode.BILINEAR),
             # transforms.CenterCrop(args.resolution) if args.center_crop else transforms.RandomCrop(args.resolution),
             # transforms.RandomHorizontalFlip() if args.random_flip else transforms.Lambda(lambda x: x),
             transforms.ToTensor(),
@@ -590,7 +593,7 @@ def main():
 
     depth_transforms = transforms.Compose(
         [
-            transforms.Resize(args.resolution, interpolation=transforms.InterpolationMode.BILINEAR),
+            transforms.Resize((args.resolution, args.resolution), interpolation=transforms.InterpolationMode.BILINEAR),
             # transforms.CenterCrop(args.resolution) if args.center_crop else transforms.RandomCrop(args.resolution),
             transforms.ToTensor(),
             transforms.Lambda(lambda x: preprocess_depth(x)),
@@ -599,15 +602,16 @@ def main():
 
     def preprocess_depth(image):
         width, height = image.shape[-2:]
+
         image = torch.nn.functional.interpolate(
-            image,
+            image.unsqueeze(0),
             size=(height // vae_scale_factor, width // vae_scale_factor),
             mode="bicubic",
             align_corners=False,
-        )
+        ).squeeze(0)
 
-        depth_min = torch.amin(image, dim=[1, 2, 3], keepdim=True)
-        depth_max = torch.amax(image, dim=[1, 2, 3], keepdim=True)
+        depth_min = torch.amin(image, dim=[0, 1, 2], keepdim=True)
+        depth_max = torch.amax(image, dim=[0, 1, 2], keepdim=True)
         image = 2.0 * (image - depth_min) / (depth_max - depth_min) - 1.0
 
         return image
@@ -616,7 +620,8 @@ def main():
         images = [image.convert("RGB") for image in examples[image_column]]
         examples["pixel_values"] = [train_transforms(image) for image in images]
         if depth_column is not None:
-            images = [image.convert("RGB") for image in examples[depth_column]]
+            images = [image.convert("L") for image in examples[depth_column]]
+
             examples["depth_pixel_values"] = [depth_transforms(image) for image in images]
 
 
@@ -739,7 +744,7 @@ def main():
                 # Convert images to latent space
                 latents = vae.encode(batch["pixel_values"].to(dtype=weight_dtype)).latent_dist.sample()
                 latents = latents * 0.18215
-                latents = torch.cat([latents, batch["depth_pixel_values"]], dim=1)
+                latents = torch.cat([latents, batch["depth_pixel_values"].to(dtype=weight_dtype)], dim=1)
 
                 # Sample noise that we'll add to the latents
                 noise = torch.randn_like(latents)
@@ -765,7 +770,8 @@ def main():
 
                 # Predict the noise residual and compute loss
                 model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
-                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+
+                loss = F.mse_loss(model_pred.float(), target[:,:4,:,:].float(), reduction="mean")
 
                 # Gather the losses across all processes for logging (if we use distributed training).
                 avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
@@ -817,8 +823,10 @@ def main():
             # run inference
             generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
             images = []
+            # open image.png in pil
+            image = Image.open("image.png").convert('RGB')
             for _ in range(args.num_validation_images):
-                images.append(pipeline(args.validation_prompt, num_inference_steps=30, generator=generator).images[0])
+                images.append(pipeline(args.validation_prompt, image=image, num_inference_steps=30, generator=generator).images[0])
 
             if accelerator.is_main_process:
                 for tracker in accelerator.trackers:
