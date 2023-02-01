@@ -141,6 +141,12 @@ runs
 /examples/runs
 /examples/**/*.args
 /examples/rag/sweep
+/examples/text_to_image/sd-clevr-scene-graph
+/examples/text_to_image/sd-clevr-with-depth
+/examples/text_to_image/sd-pokemon
+/examples/text_to_image/sd-pokemon-model
+/examples/text_to_image/sd-pokemon-model-lora
+/examples/text_to_image/wandb
 
 # data
 /data
