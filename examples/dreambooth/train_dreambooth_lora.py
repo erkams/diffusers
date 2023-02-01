@@ -69,6 +69,7 @@ def save_model_card(repo_name, images=None, base_model=str, prompt=str, repo_fol
 ---
 license: creativeml-openrail-m
 base_model: {base_model}
+instance_prompt: {prompt}
 tags:
 - stable-diffusion
 - stable-diffusion-diffusers
@@ -81,7 +82,7 @@ inference: true
     model_card = f"""
 # LoRA DreamBooth - {repo_name}
 
-These are LoRA adaption weights for {repo_name}. The weights were trained on {prompt} using [DreamBooth](https://dreambooth.github.io/). You can find some example images in the following. \n
+These are LoRA adaption weights for {base_model}. The weights were trained on {prompt} using [DreamBooth](https://dreambooth.github.io/). You can find some example images in the following. \n
 {img_str}
 """
     with open(os.path.join(repo_folder, "README.md"), "w") as f:
@@ -853,7 +854,7 @@ def main(args):
             with accelerator.accumulate(unet):
                 # Convert images to latent space
                 latents = vae.encode(batch["pixel_values"].to(dtype=weight_dtype)).latent_dist.sample()
-                latents = latents * 0.18215
+                latents = latents * vae.config.scaling_factor
 
                 # Sample noise that we'll add to the latents
                 noise = torch.randn_like(latents)
