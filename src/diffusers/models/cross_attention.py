@@ -296,10 +296,10 @@ class LoRACrossAttnProcessor(nn.Module):
     def __init__(self, hidden_size, cross_attention_dim=None, rank=4):
         super().__init__()
 
-        self.to_q_lora = LoRALinearLayer(hidden_size, hidden_size)
-        self.to_k_lora = LoRALinearLayer(cross_attention_dim or hidden_size, hidden_size)
-        self.to_v_lora = LoRALinearLayer(cross_attention_dim or hidden_size, hidden_size)
-        self.to_out_lora = LoRALinearLayer(hidden_size, hidden_size)
+        self.to_q_lora = LoRALinearLayer(hidden_size, hidden_size, rank)
+        self.to_k_lora = LoRALinearLayer(cross_attention_dim or hidden_size, hidden_size, rank)
+        self.to_v_lora = LoRALinearLayer(cross_attention_dim or hidden_size, hidden_size, rank)
+        self.to_out_lora = LoRALinearLayer(hidden_size, hidden_size, rank)
 
     def __call__(
         self, attn: CrossAttention, hidden_states, encoder_hidden_states=None, attention_mask=None, scale=1.0
@@ -408,10 +408,10 @@ class LoRAXFormersCrossAttnProcessor(nn.Module):
     def __init__(self, hidden_size, cross_attention_dim, rank=4):
         super().__init__()
 
-        self.to_q_lora = LoRALinearLayer(hidden_size, hidden_size)
-        self.to_k_lora = LoRALinearLayer(cross_attention_dim or hidden_size, hidden_size)
-        self.to_v_lora = LoRALinearLayer(cross_attention_dim or hidden_size, hidden_size)
-        self.to_out_lora = LoRALinearLayer(hidden_size, hidden_size)
+        self.to_q_lora = LoRALinearLayer(hidden_size, hidden_size, rank)
+        self.to_k_lora = LoRALinearLayer(cross_attention_dim or hidden_size, hidden_size, rank)
+        self.to_v_lora = LoRALinearLayer(cross_attention_dim or hidden_size, hidden_size, rank)
+        self.to_out_lora = LoRALinearLayer(hidden_size, hidden_size, rank)
 
     def __call__(
         self, attn: CrossAttention, hidden_states, encoder_hidden_states=None, attention_mask=None, scale=1.0
@@ -431,6 +431,7 @@ class LoRAXFormersCrossAttnProcessor(nn.Module):
         value = attn.head_to_batch_dim(value).contiguous()
 
         hidden_states = xformers.ops.memory_efficient_attention(query, key, value, attn_bias=attention_mask)
+        hidden_states = attn.batch_to_head_dim(hidden_states)
 
         # linear proj
         hidden_states = attn.to_out[0](hidden_states) + scale * self.to_out_lora(hidden_states)
