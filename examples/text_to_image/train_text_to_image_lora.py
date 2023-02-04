@@ -21,6 +21,7 @@ import os
 import random
 from pathlib import Path
 from typing import Optional
+import itertools
 
 import numpy as np
 import torch
@@ -429,6 +430,16 @@ def main():
     vae.to(accelerator.device, dtype=weight_dtype)
     text_encoder.to(accelerator.device, dtype=weight_dtype)
 
+    unet.requires_grad_(False)
+    vae.requires_grad_(False)
+    params_to_freeze = itertools.chain(
+        text_encoder.text_model.encoder.parameters(),
+        text_encoder.text_model.final_layer_norm.parameters(),
+        text_encoder.text_model.embeddings.position_embedding.parameters(),
+    )
+    for param in params_to_freeze:
+      param.requires_grad = False
+      
     if args.enable_xformers_memory_efficient_attention:
         if is_xformers_available():
             unet.enable_xformers_memory_efficient_attention()
@@ -689,6 +700,7 @@ def main():
             with accelerator.accumulate(unet):
                 # Convert images to latent space
                 latents = vae.encode(batch["pixel_values"].to(dtype=weight_dtype)).latent_dist.sample()
+
                 latents = latents * vae.config.scaling_factor
 
                 # Sample noise that we'll add to the latents
