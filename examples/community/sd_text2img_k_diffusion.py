@@ -17,11 +17,11 @@ import warnings
 from typing import Callable, List, Optional, Union
 
 import torch
+from k_diffusion.external import CompVisDenoiser, CompVisVDenoiser
 
 from diffusers import DiffusionPipeline, LMSDiscreteScheduler
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipelineOutput
 from diffusers.utils import is_accelerate_available, logging
-from k_diffusion.external import CompVisDenoiser, CompVisVDenoiser
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -351,7 +351,7 @@ class StableDiffusionPipeline(DiffusionPipeline):
         output_type: Optional[str] = "pil",
         return_dict: bool = True,
         callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
-        callback_steps: Optional[int] = 1,
+        callback_steps: int = 1,
         **kwargs,
     ):
         r"""
