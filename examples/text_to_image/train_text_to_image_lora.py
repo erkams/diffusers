@@ -323,6 +323,9 @@ def parse_args():
     parser.add_argument(
         "--enable_xformers_memory_efficient_attention", action="store_true", help="Whether or not to use xformers."
     )
+    parser.add_argument(
+        "--shuffle_triplets", action="store_true", help="Whether or not to shuffle the triplets in the training set."
+    )
 
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
@@ -563,6 +566,9 @@ def main():
         captions = []
         for caption in examples[caption_column]:
             if isinstance(caption, str):
+                if args.shuffle_triplets:
+                    triplets = caption.split(', ')
+                    caption = ", ".join(random.sample(triplets, len(triplets)))
                 captions.append(caption)
             elif isinstance(caption, (list, np.ndarray)):
                 # take a random caption if there are multiple
@@ -597,7 +603,7 @@ def main():
         if args.max_train_samples is not None:
             dataset["train"] = dataset["train"].shuffle(seed=args.seed).select(range(args.max_train_samples))
         # Set the training transforms
-        train_dataset = dataset["train"].with_transform(preprocess_train)
+        train_dataset = dataset["train"].with_transform(preprocess_train)ww
 
     def collate_fn(examples):
         pixel_values = torch.stack([example["pixel_values"] for example in examples])

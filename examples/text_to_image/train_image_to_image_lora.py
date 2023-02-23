@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Fine-tuning script for Stable Diffusion for text2image with support for LoRA."""
+"""Fine-tuning script for Stable Diffusion for image2image with support for LoRA."""
 
 import argparse
 import logging
@@ -436,7 +436,13 @@ def main():
     # Move unet, vae and text_encoder to device and cast to weight_dtype
     vae.to(accelerator.device, dtype=weight_dtype)
     text_encoder.to(accelerator.device, dtype=weight_dtype)
+    
+    # freeze parameters of models to save more memory
+    unet.requires_grad_(False)
+    vae.requires_grad_(False)
 
+    text_encoder.requires_grad_(False)
+    
     if args.enable_xformers_memory_efficient_attention:
         if is_xformers_available():
             unet.enable_xformers_memory_efficient_attention()
