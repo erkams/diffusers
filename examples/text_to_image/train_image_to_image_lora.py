@@ -143,7 +143,16 @@ def parse_args():
         "--depth_column", type=str, help="The column of the dataset containing the depth map (optional)."
     )
     parser.add_argument(
+        "--condition_on_initial_image",
+        action="store_true",
+        default=False,
+        help="If set, the model will condition on the initial image as well as the depth map.",
+    )
+    parser.add_argument(
         "--validation_prompt", type=str, default=None, help="A prompt that is sampled during training for inference."
+    )
+    parser.add_argument(
+        "--negative_validation_prompt", type=str, default=None, help="A negative prompt that is sampled during training for inference."
     )
     parser.add_argument(
         "--num_validation_images",
@@ -800,11 +809,7 @@ def main():
                 latents = vae.encode(batch["pixel_values"].to(dtype=weight_dtype)).latent_dist.sample()
                 # latents = latents * 0.18215
                 latents = latents * vae.config.scaling_factor
-
-                # Convert source image to latent space
-                source_latents = vae.encode(batch["source_pixel_values"].to(dtype=weight_dtype)).latent_dist.sample()
-                source_latents = source_latents * vae.config.scaling_factor
-
+                
                 # Sample noise that we'll add to the latents
                 noise = torch.randn_like(latents)
                 bsz = latents.shape[0]
@@ -815,8 +820,14 @@ def main():
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+                if args.condition_on_initial_image:
+                    # Convert source image to latent space
+                    source_latents = vae.encode(batch["source_pixel_values"].to(dtype=weight_dtype)).latent_dist.sample()
+                    source_latents = source_latents * vae.config.scaling_factor
 
-                latent_model_input = torch.cat([noisy_latents, source_latents, batch["depth_pixel_values"].to(dtype=weight_dtype)], dim=1)
+                    latent_model_input = torch.cat([noisy_latents, source_latents, batch["depth_pixel_values"].to(dtype=weight_dtype)], dim=1)
+                else:
+                    latent_model_input = torch.cat([noisy_latents, batch["depth_pixel_values"].to(dtype=weight_dtype)], dim=1)
 
                 # Get the text embedding for conditioning
                 encoder_hidden_states = text_encoder(batch["input_ids"])[0]
@@ -884,6 +895,7 @@ def main():
                 revision=args.revision,
                 torch_dtype=weight_dtype,
             )
+            pipeline.condition_on_initial_image = args.condition_on_initial_image
             pipeline = pipeline.to(accelerator.device)
             pipeline.set_progress_bar_config(disable=True)
 
@@ -893,7 +905,7 @@ def main():
             # open image.png in pil
             image = Image.open("image.png").convert('RGB')
             for _ in range(args.num_validation_images):
-                images.append(pipeline(args.validation_prompt, image=image, num_inference_steps=30, generator=generator).images[0])
+                images.append(pipeline(args.validation_prompt, negative_prompt=args.negative_validation_prompt, image=image, num_inference_steps=30, generator=generator).images[0])
 
             if accelerator.is_main_process:
                 for tracker in accelerator.trackers:
