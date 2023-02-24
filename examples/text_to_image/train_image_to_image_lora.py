@@ -661,11 +661,12 @@ def main():
         return image
 
     def preprocess_train(examples):
-        images_source = [image.convert("RGB") for image in examples[image_source_column]]
         images = [image.convert("RGB") for image in examples[image_target_column]]
-
         examples["pixel_values"] = [train_transforms(image) for image in images]
-        examples["source_pixel_values"] = [train_transforms(image) for image in images_source]
+
+        if args.condition_on_initial_image:
+            images_source = [image.convert("RGB") for image in examples[image_source_column]]
+            examples["source_pixel_values"] = [train_transforms(image) for image in images_source]
 
         if depth_column is not None:
             images = [image.convert("L") for image in examples[depth_column]]
@@ -688,9 +689,12 @@ def main():
         pixel_values = torch.stack([example["pixel_values"] for example in examples])
         pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
 
-        # same for source images
-        source_pixel_values = torch.stack([example["source_pixel_values"] for example in examples])
-        source_pixel_values = source_pixel_values.to(memory_format=torch.contiguous_format).float()
+        if args.condition_on_initial_image:
+            # same for source images
+            source_pixel_values = torch.stack([example["source_pixel_values"] for example in examples])
+            source_pixel_values = source_pixel_values.to(memory_format=torch.contiguous_format).float()
+        else:
+            source_pixel_values = None
 
         input_ids = torch.stack([example["input_ids"] for example in examples])
 
@@ -808,8 +812,8 @@ def main():
                 # Convert images to latent space
                 latents = vae.encode(batch["pixel_values"].to(dtype=weight_dtype)).latent_dist.sample()
                 # latents = latents * 0.18215
-                latents = latents * vae.config.scaling_factor
-                
+                latents = latents * 0.18215
+
                 # Sample noise that we'll add to the latents
                 noise = torch.randn_like(latents)
                 bsz = latents.shape[0]
@@ -820,14 +824,20 @@ def main():
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+                noisy_latents = torch.cat([noisy_latents] * 2)
+
+                depth_map = batch["depth_pixel_values"].to(dtype=weight_dtype)
+                depth_map = torch.cat([depth_map] * 2)
+
                 if args.condition_on_initial_image:
                     # Convert source image to latent space
                     source_latents = vae.encode(batch["source_pixel_values"].to(dtype=weight_dtype)).latent_dist.sample()
-                    source_latents = source_latents * vae.config.scaling_factor
+                    source_latents = source_latents * 0.18215
+                    source_latents = torch.cat([source_latents] * 2)
 
-                    latent_model_input = torch.cat([noisy_latents, source_latents, batch["depth_pixel_values"].to(dtype=weight_dtype)], dim=1)
+                    latent_model_input = torch.cat([noisy_latents, source_latents, depth_map], dim=1)
                 else:
-                    latent_model_input = torch.cat([noisy_latents, batch["depth_pixel_values"].to(dtype=weight_dtype)], dim=1)
+                    latent_model_input = torch.cat([noisy_latents, depth_map], dim=1)
 
                 # Get the text embedding for conditioning
                 encoder_hidden_states = text_encoder(batch["input_ids"])[0]
@@ -849,7 +859,7 @@ def main():
                 # Predict the noise residual and compute loss
                 model_pred = unet(latent_model_input, timesteps, encoder_hidden_states).sample
 
-                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                loss = F.mse_loss(model_pred.float(), torch.cat([target] * 2).float(), reduction="mean")
 
                 # Gather the losses across all processes for logging (if we use distributed training).
                 avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
@@ -903,9 +913,13 @@ def main():
             generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
             images = []
             # open image.png in pil
-            image = Image.open("image.png").convert('RGB')
+            image = Image.open("source_img.png").convert('RGB')
+            depth = Image.open("target_depth.png").convert('L')
+            # convert depth to FloatTensor
+            depth = transforms.ToTensor()(depth)
+
             for _ in range(args.num_validation_images):
-                images.append(pipeline(args.validation_prompt, negative_prompt=args.negative_validation_prompt, image=image, num_inference_steps=30, generator=generator).images[0])
+                images.append(pipeline(args.validation_prompt, negative_prompt=args.negative_validation_prompt, depth_map=depth, image=image, num_inference_steps=30, generator=generator).images[0])
 
             if accelerator.is_main_process:
                 for tracker in accelerator.trackers:
