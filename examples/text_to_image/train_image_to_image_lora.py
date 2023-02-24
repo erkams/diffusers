@@ -123,13 +123,21 @@ def parse_args():
         ),
     )
     parser.add_argument(
-        "--image_column", type=str, default="image", help="The column of the dataset containing an image."
+        "--image_source_column", type=str, default="source_img", help="The column of the dataset containing the initial image."
+    )
+    parser.add_argument(
+        "--image_target_column", type=str, default="target_img", help="The column of the dataset containing the target image."
     )
     parser.add_argument(
         "--caption_column",
         type=str,
         default="text",
         help="The column of the dataset containing a caption or a list of captions.",
+    )
+    parser.add_argument(
+        "--negative_caption_column",
+        type=str,
+        help="The column of the dataset containing a negative caption or a list of negative captions.",
     )
     parser.add_argument(
         "--depth_column", type=str, help="The column of the dataset containing the depth map (optional)."
@@ -350,6 +358,7 @@ def get_full_repo_name(model_id: str, organization: Optional[str] = None, token:
 
 DATASET_NAME_MAPPING = {
     "lambdalabs/pokemon-blip-captions": ("image", "text"),
+    "erkam/clevr-with-depth-full": ("source_img", "target_img", "pos_prompt", "neg_prompt", "target_depth"),
 }
 
 
@@ -543,6 +552,7 @@ def main():
     # 6. Get the column names for input/target.
     dataset_columns = DATASET_NAME_MAPPING.get(args.dataset_name, None)
 
+    # depth maps will be the depth of the target image so the model learns what edit to do from the depth map
     if args.depth_column is not None:
         depth_column = args.depth_column
         if depth_column not in column_names:
@@ -550,26 +560,45 @@ def main():
                 f"--depth_column' value '{args.depth_column}' needs to be one of: {', '.join(column_names)}"
             )
 
-    if args.image_column is None:
-        image_column = dataset_columns[0] if dataset_columns is not None else column_names[0]
+    if args.image_source_column is None:
+        image_source_column = dataset_columns[0] if dataset_columns is not None else column_names[0]
     else:
-        image_column = args.image_column
-        if image_column not in column_names:
+        image_source_column = args.image_source_column
+        if image_source_column not in column_names:
             raise ValueError(
-                f"--image_column' value '{args.image_column}' needs to be one of: {', '.join(column_names)}"
+                f"--image_source_column' value '{args.image_source_column}' needs to be one of: {', '.join(column_names)}"
             )
+        
+    if args.image_target_column is None:
+        image_target_column = dataset_columns[1] if dataset_columns is not None else column_names[1]
+    else:
+        image_target_column = args.image_target_column
+        if image_target_column not in column_names:
+            raise ValueError(
+                f"--image_target_column' value '{args.image_target_column}' needs to be one of: {', '.join(column_names)}"
+            )
+    
     if args.caption_column is None:
-        caption_column = dataset_columns[1] if dataset_columns is not None else column_names[1]
+        caption_column = dataset_columns[2] if dataset_columns is not None else column_names[2]
     else:
         caption_column = args.caption_column
         if caption_column not in column_names:
             raise ValueError(
                 f"--caption_column' value '{args.caption_column}' needs to be one of: {', '.join(column_names)}"
             )
+        
+    if args.negative_caption_column is None:
+        negative_caption_column = dataset_columns[3] if dataset_columns is not None else column_names[3]
+    else:
+        negative_caption_column = args.negative_caption_column
+        if negative_caption_column not in column_names:
+            raise ValueError(
+                f"--negative_caption_column' value '{args.negative_caption_column}' needs to be one of: {', '.join(column_names)}"
+            )
 
     # Preprocessing the datasets.
     # We need to tokenize input captions and transform the images.
-    def tokenize_captions(examples, is_train=True):
+    def tokenize_captions(examples, is_train=True, caption_column=caption_column):
         captions = []
         for caption in examples[caption_column]:
             if isinstance(caption, str):
@@ -623,8 +652,12 @@ def main():
         return image
 
     def preprocess_train(examples):
-        images = [image.convert("RGB") for image in examples[image_column]]
+        images_source = [image.convert("RGB") for image in examples[image_source_column]]
+        images = [image.convert("RGB") for image in examples[image_target_column]]
+
         examples["pixel_values"] = [train_transforms(image) for image in images]
+        examples["source_pixel_values"] = [train_transforms(image) for image in images_source]
+
         if depth_column is not None:
             images = [image.convert("L") for image in examples[depth_column]]
 
@@ -632,6 +665,8 @@ def main():
 
 
         examples["input_ids"] = tokenize_captions(examples)
+        examples["negative_input_ids"] = tokenize_captions(examples, caption_column=negative_caption_column)
+
         return examples
 
     with accelerator.main_process_first():
@@ -644,15 +679,29 @@ def main():
         pixel_values = torch.stack([example["pixel_values"] for example in examples])
         pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
 
+        # same for source images
+        source_pixel_values = torch.stack([example["source_pixel_values"] for example in examples])
+        source_pixel_values = source_pixel_values.to(memory_format=torch.contiguous_format).float()
+
         input_ids = torch.stack([example["input_ids"] for example in examples])
+
+        # same for negative captions
+        negative_input_ids = torch.stack([example["negative_input_ids"] for example in examples])
 
         if depth_column is not None:
             depth_pixel_values = torch.stack([example["depth_pixel_values"] for example in examples])
             depth_pixel_values = depth_pixel_values.to(memory_format=torch.contiguous_format).float()
 
-            return {"pixel_values": pixel_values, "depth_pixel_values": depth_pixel_values, "input_ids": input_ids}
+            return {"pixel_values": pixel_values, 
+                    "source_pixel_values": source_pixel_values,
+                    "depth_pixel_values": depth_pixel_values, 
+                    "input_ids": input_ids,
+                    "negative_input_ids": negative_input_ids}
 
-        return {"pixel_values": pixel_values, "input_ids": input_ids}
+        return {"pixel_values": pixel_values, 
+                "source_pixel_values": source_pixel_values,
+                "input_ids": input_ids,
+                "negative_input_ids": negative_input_ids}
 
     # DataLoaders creation:
     train_dataloader = torch.utils.data.DataLoader(
@@ -749,8 +798,12 @@ def main():
             with accelerator.accumulate(unet):
                 # Convert images to latent space
                 latents = vae.encode(batch["pixel_values"].to(dtype=weight_dtype)).latent_dist.sample()
-                latents = latents * 0.18215
-                latents = torch.cat([latents, batch["depth_pixel_values"].to(dtype=weight_dtype)], dim=1)
+                # latents = latents * 0.18215
+                latents = latents * vae.config.scaling_factor
+
+                # Convert source image to latent space
+                source_latents = vae.encode(batch["source_pixel_values"].to(dtype=weight_dtype)).latent_dist.sample()
+                source_latents = source_latents * vae.config.scaling_factor
 
                 # Sample noise that we'll add to the latents
                 noise = torch.randn_like(latents)
@@ -763,8 +816,13 @@ def main():
                 # (this is the forward diffusion process)
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
+                latent_model_input = torch.cat([noisy_latents, source_latents, batch["depth_pixel_values"].to(dtype=weight_dtype)], dim=1)
+
                 # Get the text embedding for conditioning
                 encoder_hidden_states = text_encoder(batch["input_ids"])[0]
+
+                # Get the text embedding for negative prompt
+                neg_encoder_hidden_states = text_encoder(batch["negative_input_ids"])[0]
 
                 # Get the target for loss depending on the prediction type
                 if noise_scheduler.config.prediction_type == "epsilon":
@@ -774,10 +832,13 @@ def main():
                 else:
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
-                # Predict the noise residual and compute loss
-                model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
+                # Concatenate the encoder hidden states with the negative encoder hidden states
+                encoder_hidden_states = torch.cat([neg_encoder_hidden_states, encoder_hidden_states])
 
-                loss = F.mse_loss(model_pred.float(), target[:,:4,:,:].float(), reduction="mean")
+                # Predict the noise residual and compute loss
+                model_pred = unet(latent_model_input, timesteps, encoder_hidden_states).sample
+
+                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
 
                 # Gather the losses across all processes for logging (if we use distributed training).
                 avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
