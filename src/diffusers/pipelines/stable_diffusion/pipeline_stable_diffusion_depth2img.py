@@ -120,6 +120,8 @@ class StableDiffusionDepth2ImgPipeline(DiffusionPipeline):
             feature_extractor=feature_extractor,
         )
         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
+        # if True pass the latent of init_image to the unet along with other latents
+        self.condition_on_initial_image = False
 
     def enable_sequential_cpu_offload(self, gpu_id=0):
         r"""
@@ -433,9 +435,10 @@ class StableDiffusionDepth2ImgPipeline(DiffusionPipeline):
         noise = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
 
         # get latents
-        init_latents = self.scheduler.add_noise(init_latents, noise, timestep)
-        latents = init_latents
-
+        init_latents_with_noise = self.scheduler.add_noise(init_latents, noise, timestep)
+        latents = init_latents_with_noise
+        if self.condition_on_initial_image:
+            return latents, init_latents
         return latents
 
     def prepare_depth_map(self, image, depth_map, batch_size, do_classifier_free_guidance, dtype, device):
@@ -643,9 +646,14 @@ class StableDiffusionDepth2ImgPipeline(DiffusionPipeline):
         latent_timestep = timesteps[:1].repeat(batch_size * num_images_per_prompt)
 
         # 7. Prepare latent variables
-        latents = self.prepare_latents(
-            image, latent_timestep, batch_size, num_images_per_prompt, prompt_embeds.dtype, device, generator
-        )
+        if self.condition_on_initial_image:
+            latents, init_latents = self.prepare_latents(
+                image, latent_timestep, batch_size, num_images_per_prompt, prompt_embeds.dtype, device, generator
+            )
+        else:
+            latents = self.prepare_latents(
+                image, latent_timestep, batch_size, num_images_per_prompt, prompt_embeds.dtype, device, generator
+            )
 
         # 8. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
@@ -657,7 +665,11 @@ class StableDiffusionDepth2ImgPipeline(DiffusionPipeline):
                 # expand the latents if we are doing classifier free guidance
                 latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
-                latent_model_input = torch.cat([latent_model_input, depth_mask], dim=1)
+                
+                if self.condition_on_initial_image:
+                    latent_model_input = torch.cat([latent_model_input, init_latents, depth_mask], dim=1)
+                else:
+                    latent_model_input = torch.cat([latent_model_input, depth_mask], dim=1)
 
                 # predict the noise residual
                 noise_pred = self.unet(latent_model_input, t, encoder_hidden_states=prompt_embeds).sample
