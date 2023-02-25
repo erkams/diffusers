@@ -627,8 +627,8 @@ def main():
     # Preprocessing the datasets. 
     train_transforms = transforms.Compose(
         [
-            transforms.Resize((args.resolution, args.resolution), interpolation=transforms.InterpolationMode.BILINEAR),
-            # transforms.CenterCrop(args.resolution) if args.center_crop else transforms.RandomCrop(args.resolution),
+            transforms.Resize((args.resolution), interpolation=transforms.InterpolationMode.BILINEAR),
+            transforms.CenterCrop(args.resolution) if args.center_crop else transforms.RandomCrop(args.resolution),
             # transforms.RandomHorizontalFlip() if args.random_flip else transforms.Lambda(lambda x: x),
             transforms.ToTensor(),
             transforms.Normalize([0.5], [0.5])
@@ -637,8 +637,8 @@ def main():
 
     depth_transforms = transforms.Compose(
         [
-            transforms.Resize((args.resolution, args.resolution), interpolation=transforms.InterpolationMode.BILINEAR),
-            # transforms.CenterCrop(args.resolution) if args.center_crop else transforms.RandomCrop(args.resolution),
+            transforms.Resize((args.resolution), interpolation=transforms.InterpolationMode.BILINEAR),
+            transforms.CenterCrop(args.resolution) if args.center_crop else transforms.RandomCrop(args.resolution),
             transforms.ToTensor(),
             transforms.Lambda(lambda x: preprocess_depth(x)),
         ]
@@ -659,19 +659,34 @@ def main():
         image = 2.0 * (image - depth_min) / (depth_max - depth_min) - 1.0
 
         return image
+    
+    def train_transform_wrapper(image, seed):
+        random.seed(seed) # apply this seed to img transforms
+        torch.manual_seed(seed)
 
+        return train_transforms(image)
+    
+    def depth_transform_wrapper(image, seed):
+        random.seed(seed) # apply this seed to img transforms
+        torch.manual_seed(seed)
+
+        return depth_transforms(image)
+    
     def preprocess_train(examples):
-        images = [image.convert("RGB") for image in examples[image_target_column]]
-        examples["pixel_values"] = [train_transforms(image) for image in images]
+        seed = np.random.randint(2147483647, size=len(examples)) # make a seed with numpy generator 
 
+        images = [image.convert("RGB") for image in examples[image_target_column]]
+        examples["pixel_values"] = [train_transform_wrapper(image, seed[i]) for i, image in enumerate(images)]
+
+        # use the same seed for transforms
         if args.condition_on_initial_image:
             images_source = [image.convert("RGB") for image in examples[image_source_column]]
-            examples["source_pixel_values"] = [train_transforms(image) for image in images_source]
+            examples["source_pixel_values"] = [train_transform_wrapper(image, seed[i]) for i, image in enumerate(images_source)]
 
         if depth_column is not None:
             images = [image.convert("L") for image in examples[depth_column]]
-
-            examples["depth_pixel_values"] = [depth_transforms(image) for image in images]
+            
+            examples["depth_pixel_values"] = [depth_transform_wrapper(image, seed[i]) for i, image in enumerate(images)]
 
 
         examples["input_ids"] = tokenize_captions(examples)
@@ -912,11 +927,16 @@ def main():
             # run inference
             generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
             images = []
+            
             # open image.png in pil
             image = Image.open("source_img.png").convert('RGB')
             depth = Image.open("target_depth.png").convert('L')
-            # convert depth to FloatTensor
-            depth = transforms.ToTensor()(depth)
+
+            seed = np.random.randint(2147483647)
+
+            # apply transformations
+            image = train_transform_wrapper(image, seed).unsqueeze(0)
+            depth = depth_transform_wrapper(depth, seed).unsqueeze(0)
 
             for _ in range(args.num_validation_images):
                 images.append(pipeline(args.validation_prompt, negative_prompt=args.negative_validation_prompt, depth_map=depth, image=image, num_inference_steps=30, generator=generator).images[0])
