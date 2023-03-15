@@ -978,7 +978,7 @@ def main():
 
     # Final inference
     # Load previous pipeline
-    pipeline = DiffusionPipeline.from_pretrained(
+    pipeline = StableDiffusionDepth2ImgPipeline.from_pretrained(
         args.pretrained_model_name_or_path, revision=args.revision, torch_dtype=weight_dtype
     )
     pipeline = pipeline.to(accelerator.device)
