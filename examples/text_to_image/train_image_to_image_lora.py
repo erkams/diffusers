@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Fine-tuning script for Stable Diffusion for text2image with support for LoRA."""
-
 import argparse
 import logging
 import math
@@ -21,12 +20,10 @@ import os
 import random
 from pathlib import Path
 from typing import Optional
-
 import numpy as np
 import torch
 import torch.nn.functional as F
 import torch.utils.checkpoint
-
 import datasets
 import diffusers
 import transformers
@@ -57,7 +54,6 @@ def save_model_card(repo_name, images=None, base_model=str, dataset_name=str, re
     for i, image in enumerate(images):
         image.save(os.path.join(repo_folder, f"image_{i}.png"))
         img_str += f"![img_{i}](./image_{i}.png)\n"
-
     yaml = f"""
 ---
 license: creativeml-openrail-m
@@ -352,19 +348,14 @@ def parse_args():
     parser.add_argument(
         "--enable_xformers_memory_efficient_attention", action="store_true", help="Whether or not to use xformers."
     )
-
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if env_local_rank != -1 and env_local_rank != args.local_rank:
         args.local_rank = env_local_rank
-
     # Sanity checks
     if args.dataset_name is None and args.train_data_dir is None:
         raise ValueError("Need either a dataset name or a training folder.")
-
     return args
-
-
 def get_full_repo_name(model_id: str, organization: Optional[str] = None, token: Optional[str] = None):
     if token is None:
         token = HfFolder.get_token()
@@ -395,7 +386,6 @@ def main():
         if not is_wandb_available():
             raise ImportError("Make sure to install wandb if you want to use it for logging during training.")
         import wandb
-
     # Make one log on every process with the configuration for debugging.
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
@@ -425,7 +415,6 @@ def main():
                 repo_name = args.hub_model_id
             repo_name = create_repo(repo_name, exist_ok=True)
             repo = Repository(args.output_dir, clone_from=repo_name)
-
             with open(os.path.join(args.output_dir, ".gitignore"), "w+") as gitignore:
                 if "step_*" not in gitignore:
                     gitignore.write("step_*\n")
@@ -460,7 +449,6 @@ def main():
     )
     vae = AutoencoderKL.from_pretrained(args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision)
     vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1)
-
     # Move unet, vae and text_encoder to device and cast to weight_dtype
     vae.to(accelerator.device, dtype=weight_dtype)
     text_encoder.to(accelerator.device, dtype=weight_dtype)
@@ -468,7 +456,6 @@ def main():
     # freeze parameters of models to save more memory
     unet.requires_grad_(False)
     vae.requires_grad_(False)
-
     text_encoder.requires_grad_(False)
     
     if args.enable_xformers_memory_efficient_attention:
@@ -476,20 +463,17 @@ def main():
             unet.enable_xformers_memory_efficient_attention()
         else:
             raise ValueError("xformers is not available. Make sure it is installed correctly")
-
     # now we will add new LoRA weights to the attention layers
     # It's important to realize here how many attention weights will be added and of which sizes
     # The sizes of the attention layers consist only of two different variables:
     # 1) - the "hidden_size", which is increased according to `unet.config.block_out_channels`.
     # 2) - the "cross attention size", which is set to `unet.config.cross_attention_dim`.
-
     # Let's first see how many attention processors we will have to set.
     # For Stable Diffusion, it should be equal to:
     # - down blocks (2x attention layers) * (2x transformer layers) * (3x down blocks) = 12
     # - mid blocks (2x attention layers) * (1x transformer layers) * (1x mid blocks) = 2
     # - up blocks (2x attention layers) * (3x transformer layers) * (3x down blocks) = 18
     # => 32 layers
-
     # Set correct lora layers
     lora_attn_procs = {}
     for name in unet.attn_processors.keys():
@@ -509,17 +493,14 @@ def main():
 
     unet.set_attn_processor(lora_attn_procs)
     lora_layers = AttnProcsLayers(unet.attn_processors)
-
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
     if args.allow_tf32:
         torch.backends.cuda.matmul.allow_tf32 = True
-
     if args.scale_lr:
         args.learning_rate = (
             args.learning_rate * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
         )
-
     # Initialize the optimizer
     if args.use_8bit_adam:
         try:
@@ -531,7 +512,6 @@ def main():
         optimizer_cls = bnb.optim.AdamW8bit
     else:
         optimizer_cls = torch.optim.AdamW
-
     optimizer = optimizer_cls(
         lora_layers.parameters(),
         lr=args.learning_rate,
@@ -578,7 +558,6 @@ def main():
             raise ValueError(
                 f"--depth_column' value '{args.depth_column}' needs to be one of: {', '.join(column_names)}"
             )
-
     if args.image_source_column is None:
         image_source_column = dataset_columns[0] if dataset_columns is not None else column_names[0]
     else:
@@ -637,7 +616,6 @@ def main():
             captions, max_length=tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
         )
         return inputs.input_ids
-
     # Preprocessing the datasets. 
     train_transforms = transforms.Compose(
         [
@@ -648,7 +626,6 @@ def main():
             transforms.Normalize([0.5], [0.5])
         ]
     )
-
     depth_transforms = transforms.Compose(
         [
             transforms.Resize((args.resolution), interpolation=transforms.InterpolationMode.BILINEAR),
@@ -677,13 +654,11 @@ def main():
     def train_transform_wrapper(image, seed):
         random.seed(seed) # apply this seed to img transforms
         torch.manual_seed(seed)
-
         return train_transforms(image)
     
     def depth_transform_wrapper(image, seed):
         random.seed(seed) # apply this seed to img transforms
         torch.manual_seed(seed)
-
         return depth_transforms(image)
     
     def preprocess_train(examples):
@@ -691,12 +666,10 @@ def main():
 
         images = [image.convert("RGB") for image in examples[image_target_column]]
         examples["pixel_values"] = [train_transform_wrapper(image, seed[i]) for i, image in enumerate(images)]
-
         # use the same seed for transforms
         if args.condition_on_initial_image:
             images_source = [image.convert("RGB") for image in examples[image_source_column]]
             examples["source_pixel_values"] = [train_transform_wrapper(image, seed[i]) for i, image in enumerate(images_source)]
-
         if depth_column is not None:
             images = [image.convert("L") for image in examples[depth_column]]
             
@@ -739,12 +712,10 @@ def main():
                     "depth_pixel_values": depth_pixel_values, 
                     "input_ids": input_ids,
                     "negative_input_ids": negative_input_ids}
-
         return {"pixel_values": pixel_values, 
                 "source_pixel_values": source_pixel_values,
                 "input_ids": input_ids,
                 "negative_input_ids": negative_input_ids}
-
     # DataLoaders creation:
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
@@ -753,33 +724,28 @@ def main():
         batch_size=args.train_batch_size,
         num_workers=args.dataloader_num_workers,
     )
-
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     if args.max_train_steps is None:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
-
     lr_scheduler = get_scheduler(
         args.lr_scheduler,
         optimizer=optimizer,
         num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
         num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
     )
-
     # Prepare everything with our `accelerator`.
     lora_layers, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
         lora_layers, optimizer, train_dataloader, lr_scheduler
     )
-
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     if overrode_max_train_steps:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
     # Afterwards we recalculate our number of training epochs
     args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
-
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
@@ -797,7 +763,6 @@ def main():
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
     global_step = 0
     first_epoch = 0
-
     # Potentially load in the weights and states from a previous save
     if args.resume_from_checkpoint:
         if args.resume_from_checkpoint != "latest":
@@ -808,7 +773,6 @@ def main():
             dirs = [d for d in dirs if d.startswith("checkpoint")]
             dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
             path = dirs[-1] if len(dirs) > 0 else None
-
         if path is None:
             accelerator.print(
                 f"Checkpoint '{args.resume_from_checkpoint}' does not exist. Starting a new training run."
@@ -836,20 +800,17 @@ def main():
                 if step % args.gradient_accumulation_steps == 0:
                     progress_bar.update(1)
                 continue
-
             with accelerator.accumulate(unet):
                 # Convert images to latent space
                 latents = vae.encode(batch["pixel_values"].to(dtype=weight_dtype)).latent_dist.sample()
                 # latents = latents * 0.18215
                 latents = latents * 0.18215
-
                 # Sample noise that we'll add to the latents
                 noise = torch.randn_like(latents)
                 bsz = latents.shape[0]
                 # Sample a random timestep for each image
                 timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (bsz,), device=latents.device)
                 timesteps = timesteps.long()
-
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
@@ -902,14 +863,12 @@ def main():
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
-
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
                 progress_bar.update(1)
                 global_step += 1
                 accelerator.log({"train_loss": train_loss}, step=global_step)
                 train_loss = 0.0
-
                 if global_step % args.checkpointing_steps == 0:
                     if accelerator.is_main_process:
                         save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
@@ -956,7 +915,6 @@ def main():
 
             for _ in range(args.num_validation_images):
                 images.append(pipeline(args.validation_prompt, negative_prompt=args.negative_validation_prompt, depth_map=depth, image=image, num_inference_steps=30, generator=generator).images[0])
-
             if accelerator.is_main_process:
                 for tracker in accelerator.trackers:
                     if tracker.name == "tensorboard":
@@ -980,7 +938,6 @@ def main():
     if accelerator.is_main_process:
         unet = unet.to(torch.float32)
         unet.save_attn_procs(args.output_dir)
-
         if args.push_to_hub:
             save_model_card(
                 repo_name,
@@ -1006,7 +963,6 @@ def main():
     images = []
     for _ in range(args.num_validation_images):
         images.append(pipeline(args.validation_prompt, num_inference_steps=30, generator=generator).images[0])
-
     if accelerator.is_main_process:
         for tracker in accelerator.trackers:
             if tracker.name == "tensorboard":

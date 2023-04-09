@@ -1,4 +1,4 @@
-# Copyright 2022 The HuggingFace Team. All rights reserved.
+# Copyright 2023 The HuggingFace Team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import PIL
 import torch
 from transformers import CLIPTextModel, CLIPTokenizer
 
+from ...loaders import TextualInversionLoaderMixin
 from ...models import AutoencoderKL, UNet2DConditionModel
 from ...schedulers import DDPMScheduler, KarrasDiffusionSchedulers
 from ...utils import deprecate, is_accelerate_available, logging, randn_tensor
@@ -37,7 +38,7 @@ def preprocess(image):
 
     if isinstance(image[0], PIL.Image.Image):
         w, h = image[0].size
-        w, h = map(lambda x: x - x % 64, (w, h))  # resize to integer multiple of 64
+        w, h = (x - x % 64 for x in (w, h))  # resize to integer multiple of 64
 
         image = [np.array(i.resize((w, h)))[None, :] for i in image]
         image = np.concatenate(image, axis=0)
@@ -50,7 +51,7 @@ def preprocess(image):
     return image
 
 
-class StableDiffusionUpscalePipeline(DiffusionPipeline):
+class StableDiffusionUpscalePipeline(DiffusionPipeline, TextualInversionLoaderMixin):
     r"""
     Pipeline for text-guided image super-resolution using Stable Diffusion 2.
 
@@ -88,21 +89,22 @@ class StableDiffusionUpscalePipeline(DiffusionPipeline):
     ):
         super().__init__()
 
-        # check if vae has a config attribute `scaling_factor` and if it is set to 0.08333, else set it to 0.08333 and deprecate
-        is_vae_scaling_factor_set_to_0_08333 = (
-            hasattr(vae.config, "scaling_factor") and vae.config.scaling_factor == 0.08333
-        )
-        if not is_vae_scaling_factor_set_to_0_08333:
-            deprecation_message = (
-                "The configuration file of the vae does not contain `scaling_factor` or it is set to"
-                f" {vae.config.scaling_factor}, which seems highly unlikely. If your checkpoint is a fine-tuned"
-                " version of `stabilityai/stable-diffusion-x4-upscaler` you should change 'scaling_factor' to 0.08333"
-                " Please make sure to update the config accordingly, as not doing so might lead to incorrect results"
-                " in future versions. If you have downloaded this checkpoint from the Hugging Face Hub, it would be"
-                " very nice if you could open a Pull Request for the `vae/config.json` file"
+        if hasattr(vae, "config"):
+            # check if vae has a config attribute `scaling_factor` and if it is set to 0.08333, else set it to 0.08333 and deprecate
+            is_vae_scaling_factor_set_to_0_08333 = (
+                hasattr(vae.config, "scaling_factor") and vae.config.scaling_factor == 0.08333
             )
-            deprecate("wrong scaling_factor", "1.0.0", deprecation_message, standard_warn=False)
-            vae.register_to_config(scaling_factor=0.08333)
+            if not is_vae_scaling_factor_set_to_0_08333:
+                deprecation_message = (
+                    "The configuration file of the vae does not contain `scaling_factor` or it is set to"
+                    f" {vae.config.scaling_factor}, which seems highly unlikely. If your checkpoint is a fine-tuned"
+                    " version of `stabilityai/stable-diffusion-x4-upscaler` you should change 'scaling_factor' to"
+                    " 0.08333 Please make sure to update the config accordingly, as not doing so might lead to"
+                    " incorrect results in future versions. If you have downloaded this checkpoint from the Hugging"
+                    " Face Hub, it would be very nice if you could open a Pull Request for the `vae/config.json` file"
+                )
+                deprecate("wrong scaling_factor", "1.0.0", deprecation_message, standard_warn=False)
+                vae.register_to_config(scaling_factor=0.08333)
 
         self.register_modules(
             vae=vae,
@@ -175,8 +177,8 @@ class StableDiffusionUpscalePipeline(DiffusionPipeline):
                 whether to use classifier free guidance or not
             negative_prompt (`str` or `List[str]`, *optional*):
                 The prompt or prompts not to guide the image generation. If not defined, one has to pass
-                `negative_prompt_embeds`. instead. If not defined, one has to pass `negative_prompt_embeds`. instead.
-                Ignored when not using guidance (i.e., ignored if `guidance_scale` is less than `1`).
+                `negative_prompt_embeds` instead. Ignored when not using guidance (i.e., ignored if `guidance_scale` is
+                less than `1`).
             prompt_embeds (`torch.FloatTensor`, *optional*):
                 Pre-generated text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt weighting. If not
                 provided, text embeddings will be generated from `prompt` input argument.
@@ -193,6 +195,10 @@ class StableDiffusionUpscalePipeline(DiffusionPipeline):
             batch_size = prompt_embeds.shape[0]
 
         if prompt_embeds is None:
+            # textual inversion: procecss multi-vector tokens if necessary
+            if isinstance(self, TextualInversionLoaderMixin):
+                prompt = self.maybe_convert_prompt(prompt, self.tokenizer)
+
             text_inputs = self.tokenizer(
                 prompt,
                 padding="max_length",
@@ -252,6 +258,10 @@ class StableDiffusionUpscalePipeline(DiffusionPipeline):
                 )
             else:
                 uncond_tokens = negative_prompt
+
+            # textual inversion: procecss multi-vector tokens if necessary
+            if isinstance(self, TextualInversionLoaderMixin):
+                uncond_tokens = self.maybe_convert_prompt(uncond_tokens, self.tokenizer)
 
             max_length = prompt_embeds.shape[1]
             uncond_input = self.tokenizer(
@@ -316,9 +326,49 @@ class StableDiffusionUpscalePipeline(DiffusionPipeline):
         image = image.cpu().permute(0, 2, 3, 1).float().numpy()
         return image
 
-    def check_inputs(self, prompt, image, noise_level, callback_steps):
-        if not isinstance(prompt, str) and not isinstance(prompt, list):
+    def check_inputs(
+        self,
+        prompt,
+        image,
+        noise_level,
+        callback_steps,
+        negative_prompt=None,
+        prompt_embeds=None,
+        negative_prompt_embeds=None,
+    ):
+        if (callback_steps is None) or (
+            callback_steps is not None and (not isinstance(callback_steps, int) or callback_steps <= 0)
+        ):
+            raise ValueError(
+                f"`callback_steps` has to be a positive integer but is {callback_steps} of type"
+                f" {type(callback_steps)}."
+            )
+
+        if prompt is not None and prompt_embeds is not None:
+            raise ValueError(
+                f"Cannot forward both `prompt`: {prompt} and `prompt_embeds`: {prompt_embeds}. Please make sure to"
+                " only forward one of the two."
+            )
+        elif prompt is None and prompt_embeds is None:
+            raise ValueError(
+                "Provide either `prompt` or `prompt_embeds`. Cannot leave both `prompt` and `prompt_embeds` undefined."
+            )
+        elif prompt is not None and (not isinstance(prompt, str) and not isinstance(prompt, list)):
             raise ValueError(f"`prompt` has to be of type `str` or `list` but is {type(prompt)}")
+
+        if negative_prompt is not None and negative_prompt_embeds is not None:
+            raise ValueError(
+                f"Cannot forward both `negative_prompt`: {negative_prompt} and `negative_prompt_embeds`:"
+                f" {negative_prompt_embeds}. Please make sure to only forward one of the two."
+            )
+
+        if prompt_embeds is not None and negative_prompt_embeds is not None:
+            if prompt_embeds.shape != negative_prompt_embeds.shape:
+                raise ValueError(
+                    "`prompt_embeds` and `negative_prompt_embeds` must have the same shape when passed directly, but"
+                    f" got: `prompt_embeds` {prompt_embeds.shape} != `negative_prompt_embeds`"
+                    f" {negative_prompt_embeds.shape}."
+                )
 
         if (
             not isinstance(image, torch.Tensor)
@@ -479,13 +529,27 @@ class StableDiffusionUpscalePipeline(DiffusionPipeline):
         """
 
         # 1. Check inputs
-        self.check_inputs(prompt, image, noise_level, callback_steps)
+        self.check_inputs(
+            prompt,
+            image,
+            noise_level,
+            callback_steps,
+            negative_prompt,
+            prompt_embeds,
+            negative_prompt_embeds,
+        )
 
         if image is None:
             raise ValueError("`image` input cannot be undefined.")
 
         # 2. Define call parameters
-        batch_size = 1 if isinstance(prompt, str) else len(prompt)
+        if prompt is not None and isinstance(prompt, str):
+            batch_size = 1
+        elif prompt is not None and isinstance(prompt, list):
+            batch_size = len(prompt)
+        else:
+            batch_size = prompt_embeds.shape[0]
+
         device = self._execution_device
         # here `guidance_scale` is defined analog to the guidance weight `w` of equation (2)
         # of the Imagen paper: https://arxiv.org/pdf/2205.11487.pdf . `guidance_scale = 1`
