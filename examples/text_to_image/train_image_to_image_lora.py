@@ -149,6 +149,12 @@ def parse_args():
         help="If set, the model will condition on the initial image as well as the depth map.",
     )
     parser.add_argument(
+        "--pass_init_image",
+        action="store_true",
+        default=False,
+        help="If set, the model will condition on the initial image as well as the depth map.",
+    )
+    parser.add_argument(
         "--validation_prompt", type=str, default=None, help="A prompt that is sampled during training for inference."
     )
     parser.add_argument(
@@ -213,6 +219,9 @@ def parse_args():
         "--random_flip",
         action="store_true",
         help="whether to randomly flip images horizontally",
+    )
+    parser.add_argument(
+        "--shuffle_triplets", action="store_true", help="Whether or not to shuffle the triplets in the training set."
     )
     parser.add_argument(
         "--train_batch_size", type=int, default=16, help="Batch size (per device) for the training dataloader."
@@ -609,9 +618,13 @@ def main():
     # Preprocessing the datasets.
     # We need to tokenize input captions and transform the images.
     def tokenize_captions(examples, is_train=True, caption_column=caption_column):
+
         captions = []
         for caption in examples[caption_column]:
             if isinstance(caption, str):
+                if args.shuffle_triplets:
+                    triplets = caption.split(', ')
+                    caption = ", ".join(random.sample(triplets, len(triplets)))
                 captions.append(caption)
             elif isinstance(caption, (list, np.ndarray)):
                 # take a random caption if there are multiple
@@ -920,8 +933,10 @@ def main():
                 unet=accelerator.unwrap_model(unet),
                 revision=args.revision,
                 torch_dtype=weight_dtype,
+                pass_init_image=args.pass_init_image
             )
             pipeline.condition_on_initial_image = args.condition_on_initial_image
+            pipeline.pass_init_image = args.pass_init_image
             pipeline = pipeline.to(accelerator.device)
             pipeline.set_progress_bar_config(disable=True)
 
@@ -931,7 +946,7 @@ def main():
             
             # open image.png in pil
             image = Image.open("source_img.png").convert('RGB')
-            depth = Image.open("target_depth.png").convert('L')
+            depth = Image.open(f"{args.depth_column}.png").convert('L')
 
             seed = np.random.randint(2147483647)
 

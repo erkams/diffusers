@@ -86,9 +86,10 @@ class StableDiffusionDepth2ImgPipeline(DiffusionPipeline):
         scheduler: KarrasDiffusionSchedulers,
         depth_estimator: DPTForDepthEstimation,
         feature_extractor: DPTFeatureExtractor,
+        pass_init_image: bool = True,
     ):
         super().__init__()
-
+        self.pass_init_image = pass_init_image
         is_unet_version_less_0_9_0 = hasattr(unet.config, "_diffusers_version") and version.parse(
             version.parse(unet.config._diffusers_version).base_version
         ) < version.parse("0.9.0.dev0")
@@ -393,7 +394,6 @@ class StableDiffusionDepth2ImgPipeline(DiffusionPipeline):
             raise ValueError(
                 f"`image` has to be of type `torch.Tensor`, `PIL.Image.Image` or list but is {type(image)}"
             )
-
         image = image.to(device=device, dtype=dtype)
 
         batch_size = batch_size * num_images_per_prompt
@@ -435,8 +435,12 @@ class StableDiffusionDepth2ImgPipeline(DiffusionPipeline):
         noise = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
 
         # get latents
-        init_latents_with_noise = self.scheduler.add_noise(init_latents, noise, timestep)
-        latents = init_latents_with_noise
+        if self.pass_init_image:
+            init_latents_with_noise = self.scheduler.add_noise(init_latents, noise, timestep)
+            latents = init_latents_with_noise
+        else:
+            latents = noise * self.scheduler.init_noise_sigma
+
         if self.condition_on_initial_image:
             return latents, init_latents
         return latents

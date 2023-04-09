@@ -596,6 +596,7 @@ def main():
     # Preprocessing the datasets.
     # We need to tokenize input captions and transform the images.
     def tokenize_captions(examples, is_train=True):
+
         captions = []
         for caption in examples[caption_column]:
             if isinstance(caption, str):
