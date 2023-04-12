@@ -384,7 +384,8 @@ class StableDiffusionPipeline(DiffusionPipeline, TextualInversionLoaderMixin):
             if isinstance(self, TextualInversionLoaderMixin):
                 uncond_tokens = self.maybe_convert_prompt(uncond_tokens, self.tokenizer)
 
-            max_length = prompt_embeds.shape[1]
+            max_length = prompt_embeds.shape[1] if self.tokenizer.model_max_length > prompt_embeds.shape[1] else self.tokenizer.model_max_length
+            
             uncond_input = self.tokenizer(
                 uncond_tokens,
                 padding="max_length",
@@ -416,6 +417,9 @@ class StableDiffusionPipeline(DiffusionPipeline, TextualInversionLoaderMixin):
             # For classifier free guidance, we need to do two forward passes.
             # Here we concatenate the unconditional and text embeddings into a single batch
             # to avoid doing two forward passes
+            if negative_prompt_embeds.shape[1] != prompt_embeds.shape[1]:
+                negative_prompt_embeds = torch.cat((negative_prompt_embeds, -1 * prompt_embeds[:,negative_prompt_embeds.shape[1]:,:]), dim=1)
+
             prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds])
 
         return prompt_embeds
