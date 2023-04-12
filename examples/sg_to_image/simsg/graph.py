@@ -65,7 +65,7 @@ class GraphTripleConv(nn.Module):
     
     # Get current vectors for triples; shape is (num_triples, 3 * Din)
     # Pass through net1 to get new triple vecs; shape is (num_triples, 2 * H + Dout)
-    print(cur_s_vecs.shape, pred_vecs.shape, cur_o_vecs.shape)
+
     cur_t_vecs = torch.cat([cur_s_vecs, pred_vecs, cur_o_vecs], dim=1)
     new_t_vecs = self.net1(cur_t_vecs)
 

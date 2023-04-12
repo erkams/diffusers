@@ -154,6 +154,12 @@ def parse_args():
         help="The column of the dataset containing the list of bounding boxes of the objects",
     )
     parser.add_argument(
+        "--objects_column",
+        type=str,
+        default="target_obj",
+        help="The column of the dataset containing the list of the objects in the image",
+    )
+    parser.add_argument(
         "--cond_place",
         type=str,
         default="attn",
@@ -447,9 +453,10 @@ def main():
     checkpoint = torch.load(args.sg_model_path)
     sg_net = SIMSGModel(**checkpoint['model_kwargs'])
     sg_net.load_state_dict(checkpoint['model_state'])
-    sg_net.enable_embedding()
+    sg_net.enable_embedding(text_encoder=text_encoder, tokenizer=tokenizer)
     sg_net.image_size = 64
     sg_net.requires_grad_(False)
+
 
     # freeze parameters of models to save more memory
     unet.requires_grad_(False)
@@ -591,11 +598,6 @@ def main():
     # We need to tokenize inputs and targets.
     column_names = dataset["train"].column_names
 
-    # Prepare validation sample
-    val_sample = dataset['val'][0]
-    val_sample['sg_embed'] = prepare_sg_embeds([val_sample])
-    val_sample["input_ids"] = tokenize_captions([val_sample])
-
     # 6. Get the column names for input/target.
     dataset_columns = DATASET_NAME_MAPPING.get(args.dataset_name, None)
     if args.image_column is None:
@@ -626,17 +628,22 @@ def main():
             raise ValueError(
                 f"--boxes_column' value '{args.boxes_column}' needs to be one of: {', '.join(column_names)}"
             )
+    if args.objects_column is not None:
+        objects_column = args.objects_column
+        if objects_column not in column_names:
+            raise ValueError(
+                f"--objects_column' value '{args.objects_column}' needs to be one of: {', '.join(column_names)}"
+            )
     
     def prepare_sg_embeds(examples):
-        max_length=(12, 66)
+        max_length=(7, 21)
         sg_embeds = []
-        for triplets, boxes in zip(examples[triplets_column], examples[boxes_column]):
+        for triplets, boxes, objects in zip(examples[triplets_column], examples[boxes_column], examples[objects_column]):
             random.shuffle(triplets)
-            embed = sg_net.encode_sg(triplets, boxes, max_length=max_length, batch_size=args.train_batch_size)
+            embed = sg_net.encode_sg(triplets, objects, boxes, max_length=max_length, batch_size=args.train_batch_size)
             sg_embeds.append(embed)
 
         sg_embed = torch.stack(sg_embeds, dim=0)
-        print(f'sg embed shape before resizing: {sg_embed.shape}')
         if args.cond_place == 'latent':
             # here 2 is an hyperparameter
             out_shape = (1, 2, args.resolution/vae.config.scaling_factor, args.resolution/vae.config.scaling_factor)
@@ -647,9 +654,8 @@ def main():
 
         elif args.cond_place == 'attn':
             out_shape = (1, sum(max_length), 1024)
-            sg_embed = sg_embed.repeat(1, 1, out_shape[2]/sg_embed.shape[2])
+            sg_embed = sg_embed.repeat(1, 1, out_shape[2]//sg_embed.shape[2])
 
-        print(f'sg embed shape after resizing: {sg_embed.shape}')
         return sg_embed
 
     # Preprocessing the datasets.
@@ -688,6 +694,9 @@ def main():
 
     def preprocess_train(examples):
         images = [image.convert("RGB") for image in examples[image_column]]
+        examples[triplets_column] = [torch.tensor(triplets, device=accelerator.device) for triplets in examples[triplets_column]]
+        examples[boxes_column] = [torch.tensor(boxes, device=accelerator.device) for boxes in examples[boxes_column]]
+        examples[objects_column] = [torch.tensor(objects, device=accelerator.device) for objects in examples[objects_column]]
         examples["pixel_values"] = [train_transforms(image) for image in images]
         examples["input_ids"] = tokenize_captions(examples)
         examples["sg_embeds"] = prepare_sg_embeds(examples)
@@ -703,7 +712,9 @@ def main():
         pixel_values = torch.stack([example["pixel_values"] for example in examples])
         pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
         input_ids = torch.stack([example["input_ids"] for example in examples])
-        return {"pixel_values": pixel_values, "input_ids": input_ids}
+        sg_embeds = torch.stack([example["sg_embeds"] for example in examples])
+        return {"pixel_values": pixel_values, "input_ids": input_ids, "sg_embeds": sg_embeds, "prompt": examples[0][caption_column],
+                "triplets": examples[0][triplets_column], "boxes": examples[0][boxes_column]}
 
     # DataLoaders creation:
     train_dataloader = torch.utils.data.DataLoader(
@@ -749,6 +760,14 @@ def main():
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
     def validation_step(epoch):
+        # Prepare validation sample
+        val_sample = dataset['val'][0]
+        val_sample[triplets_column] = [torch.tensor(val_sample[triplets_column], device=accelerator.device)]
+        val_sample[boxes_column] = [torch.tensor(val_sample[boxes_column], device=accelerator.device)]
+        val_sample[caption_column] = [val_sample[caption_column]]
+        val_sample['sg_embeds'] = prepare_sg_embeds(val_sample)
+        val_sample["input_ids"] = tokenize_captions(val_sample).to(accelerator.device)
+
         validation_prompt = val_sample["pos_prompt"]
         logger.info(
             f"Running validation... \n Generating {args.num_validation_images} images with prompt:"
@@ -770,8 +789,11 @@ def main():
         images = []
 
         encoder_hidden_states = text_encoder(val_sample["input_ids"])[0]
+
+        print(f'***VAL*** sg embed shape: {val_sample["sg_embeds"].shape}') if epoch == 0 else None
+
         if args.cond_place == 'attn':
-            prompt_embeds = torch.cat((encoder_hidden_states, val_sample['sg_embed']), dim=1)
+            prompt_embeds = torch.cat((encoder_hidden_states, val_sample['sg_embeds']), dim=1)
         else:
             prompt_embeds = encoder_hidden_states
         
@@ -794,12 +816,12 @@ def main():
                     }
                 )
         del pipeline
+        del val_sample
         torch.cuda.empty_cache()
 
-    logger.info("***** Running validation check *****")
-    validation_step(0)
-    logger.info("***** Running training *****")
-
+    # torch.backends.cudnn.enabled = False
+    # logger.info("***** Running validation check *****")
+    # validation_step(0)
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
@@ -871,15 +893,22 @@ def main():
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+                if step == 0:
+                    print(f'sg embed shape: {batch["sg_embeds"].shape}')
+                    print(f'STEP: {step}')
+                # if step > 40:
+                #     print(f'PROMPT: {batch["prompt"]}')
+                #     print(f'TRIPLETS: {batch["triplets"]}')
+                #     print(f'BOXES: {batch["boxes"]}')
 
                 if args.cond_place == 'latent':
-                    noisy_latents = torch.cat([noisy_latents, batch['sg_embed']], dim=1)
+                    noisy_latents = torch.cat([noisy_latents, batch['sg_embeds']], dim=1)
 
                 # Get the text embedding for conditioning
                 encoder_hidden_states = text_encoder(batch["input_ids"])[0]
 
                 if args.cond_place == 'attn':
-                    encoder_hidden_states = torch.cat([encoder_hidden_states, batch['sg_embed']], dim=1)
+                    encoder_hidden_states = torch.cat([encoder_hidden_states, batch['sg_embeds']], dim=1)
 
                 # Get the target for loss depending on the prediction type
                 if noise_scheduler.config.prediction_type == "epsilon":
