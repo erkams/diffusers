@@ -40,7 +40,7 @@ from tqdm.auto import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 
 import diffusers
-from diffusers import AutoencoderKL, DDPMScheduler, DiffusionPipeline, UNet2DConditionModel
+from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline, UNet2DConditionModel
 from diffusers.loaders import AttnProcsLayers
 from diffusers.models.attention_processor import LoRAAttnProcessor
 from diffusers.optimization import get_scheduler
@@ -152,6 +152,13 @@ def parse_args():
         type=str,
         default="target_box",
         help="The column of the dataset containing the list of bounding boxes of the objects",
+    )
+    parser.add_argument(
+        "--cond_place",
+        type=str,
+        default="attn",
+        choices= ["latent", "attn"],
+        help="Where to append the condition",
     )
     parser.add_argument(
         "--validation_prompt", type=str, default=None, help="A prompt that is sampled during training for inference."
@@ -584,6 +591,11 @@ def main():
     # We need to tokenize inputs and targets.
     column_names = dataset["train"].column_names
 
+    # Prepare validation sample
+    val_sample = dataset['val'][0]
+    val_sample['sg_embed'] = prepare_sg_embeds([val_sample])
+    val_sample["input_ids"] = tokenize_captions([val_sample])
+
     # 6. Get the column names for input/target.
     dataset_columns = DATASET_NAME_MAPPING.get(args.dataset_name, None)
     if args.image_column is None:
@@ -616,9 +628,27 @@ def main():
             )
     
     def prepare_sg_embeds(examples):
-
+        max_length=(12, 66)
+        sg_embeds = []
         for triplets, boxes in zip(examples[triplets_column], examples[boxes_column]):
-            sg_embed = sg_net.encode_sg(triplets, boxes)
+            embed = sg_net.encode_sg(triplets, boxes, max_length=max_length, batch_size=args.train_batch_size)
+            sg_embeds.append(embed)
+
+        sg_embed = torch.stack(sg_embeds, dim=0)
+        print(f'sg embed shape before resizing: {sg_embed.shape}')
+        if args.cond_place == 'latent':
+            # here 2 is an hyperparameter
+            out_shape = (1, 2, args.resolution/vae.config.scaling_factor, args.resolution/vae.config.scaling_factor)
+            # resize vector with interpolation
+            sg_embed = F.interpolate(sg_embed, size=(out_shape[-2], out_shape[-1]), mode='bilinear', align_corners=False)
+            sg_embed = sg_embed.squeeze(0)
+            sg_embed = torch.cat([sg_embed] * out_shape[1], dim=0)
+
+        elif args.cond_place == 'attn':
+            out_shape = (1, sum(max_length), 1024)
+            sg_embed = sg_embed.repeat(1, 1, out_shape[2]/sg_embed.shape[2])
+
+        print(f'sg embed shape after resizing: {sg_embed.shape}')
         return sg_embed
 
     # Preprocessing the datasets.
@@ -659,6 +689,7 @@ def main():
         images = [image.convert("RGB") for image in examples[image_column]]
         examples["pixel_values"] = [train_transforms(image) for image in images]
         examples["input_ids"] = tokenize_captions(examples)
+        examples["sg_embeds"] = prepare_sg_embeds(examples)
         return examples
 
     with accelerator.main_process_first():
@@ -715,6 +746,57 @@ def main():
 
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
+
+    def validation_step(epoch):
+        logger.info(
+            f"Running validation... \n Generating {args.num_validation_images} images with prompt:"
+            f" {args.validation_prompt}."
+        )
+
+        # create pipeline
+        pipeline = StableDiffusionPipeline.from_pretrained(
+            args.pretrained_model_name_or_path,
+            unet=accelerator.unwrap_model(unet),
+            revision=args.revision,
+            torch_dtype=weight_dtype,
+        )
+        pipeline = pipeline.to(accelerator.device)
+        pipeline.set_progress_bar_config(disable=True)
+
+        # run inference
+        generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
+        images = []
+
+        encoder_hidden_states = text_encoder(val_sample["input_ids"])[0]
+        if args.cond_place == 'attn':
+            prompt_embeds = torch.cat((encoder_hidden_states, val_sample['sg_embed']), dim=1)
+        else:
+            prompt_embeds = encoder_hidden_states
+        
+        for _ in range(args.num_validation_images):
+            images.append(
+                pipeline(prompt_embeds=prompt_embeds, num_inference_steps=30, generator=generator).images[0]
+            )
+
+        for tracker in accelerator.trackers:
+            if tracker.name == "tensorboard":
+                np_images = np.stack([np.asarray(img) for img in images])
+                tracker.writer.add_images("validation", np_images, epoch, dataformats="NHWC")
+            if tracker.name == "wandb":
+                tracker.log(
+                    {
+                        "validation": [
+                            wandb.Image(image, caption=f"{i}: {args.validation_prompt}")
+                            for i, image in enumerate(images)
+                        ]
+                    }
+                )
+        del pipeline
+        torch.cuda.empty_cache()
+
+    logger.info("***** Running validation check *****")
+    validation_step(0)
+    logger.info("***** Running training *****")
 
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
@@ -788,8 +870,14 @@ def main():
                 # (this is the forward diffusion process)
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
+                if args.cond_place == 'latent':
+                    noisy_latents = torch.cat([noisy_latents, batch['sg_embed']], dim=1)
+
                 # Get the text embedding for conditioning
                 encoder_hidden_states = text_encoder(batch["input_ids"])[0]
+
+                if args.cond_place == 'attn':
+                    encoder_hidden_states = torch.cat([encoder_hidden_states, batch['sg_embed']], dim=1)
 
                 # Get the target for loss depending on the prediction type
                 if noise_scheduler.config.prediction_type == "epsilon":
@@ -837,44 +925,7 @@ def main():
 
         if accelerator.is_main_process:
             if args.validation_prompt is not None and epoch % args.validation_epochs == 0:
-                logger.info(
-                    f"Running validation... \n Generating {args.num_validation_images} images with prompt:"
-                    f" {args.validation_prompt}."
-                )
-                # create pipeline
-                pipeline = DiffusionPipeline.from_pretrained(
-                    args.pretrained_model_name_or_path,
-                    unet=accelerator.unwrap_model(unet),
-                    revision=args.revision,
-                    torch_dtype=weight_dtype,
-                )
-                pipeline = pipeline.to(accelerator.device)
-                pipeline.set_progress_bar_config(disable=True)
-
-                # run inference
-                generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
-                images = []
-                for _ in range(args.num_validation_images):
-                    images.append(
-                        pipeline(args.validation_prompt, num_inference_steps=30, generator=generator).images[0]
-                    )
-
-                for tracker in accelerator.trackers:
-                    if tracker.name == "tensorboard":
-                        np_images = np.stack([np.asarray(img) for img in images])
-                        tracker.writer.add_images("validation", np_images, epoch, dataformats="NHWC")
-                    if tracker.name == "wandb":
-                        tracker.log(
-                            {
-                                "validation": [
-                                    wandb.Image(image, caption=f"{i}: {args.validation_prompt}")
-                                    for i, image in enumerate(images)
-                                ]
-                            }
-                        )
-
-                del pipeline
-                torch.cuda.empty_cache()
+                validation_step(epoch)
 
     # Save the lora layers
     accelerator.wait_for_everyone()
@@ -899,7 +950,7 @@ def main():
 
     # Final inference
     # Load previous pipeline
-    pipeline = DiffusionPipeline.from_pretrained(
+    pipeline = StableDiffusionPipeline.from_pretrained(
         args.pretrained_model_name_or_path, revision=args.revision, torch_dtype=weight_dtype
     )
     pipeline = pipeline.to(accelerator.device)

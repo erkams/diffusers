@@ -207,7 +207,7 @@ class SIMSGModel(nn.Module):
         del self.box_net
         del self.mask_net
 
-    def encode_sg(self, triples, boxes_gt=None, max_length=(30, 226), out_shape=(1, 2, 64, 64)):
+    def encode_sg(self, triples, boxes_gt=None, max_length=(12, 66), batch_size=1):
         """
         Encode a scene graph into a vector representation.
 
@@ -264,7 +264,7 @@ class SIMSGModel(nn.Module):
         if not (self.is_baseline or self.is_supervised):
 
             box_ones = torch.ones([num_objs, 1], dtype=boxes_gt.dtype, device=boxes_gt.device)
-            box_keep, _ = self.prepare_keep_idx(True, box_ones, out_shape[0], obj_to_img,
+            box_keep, _ = self.prepare_keep_idx(True, box_ones, batch_size, obj_to_img,
                                                          keep_box_idx, keep_feat_idx)
 
             boxes_prior = boxes_gt * box_keep
@@ -297,11 +297,12 @@ class SIMSGModel(nn.Module):
 
         # concat vectors
         sg_embed = torch.cat([obj_vecs, pred_vecs], dim=0)
-
-        # resize vector with interpolation
-        sg_embed = F.interpolate(sg_embed.unsqueeze(0), size=(out_shape[-2], out_shape[-1]), mode='bilinear', align_corners=False)
-        sg_embed = sg_embed.squeeze(0)
-        sg_embed = torch.cat([sg_embed] * out_shape[0], dim=0)
+        print(f'sg_embed shape: {sg_embed.shape}')
+        
+        # # resize vector with interpolation
+        # sg_embed = F.interpolate(sg_embed.unsqueeze(0), size=(out_shape[-2], out_shape[-1]), mode='bilinear', align_corners=False)
+        # sg_embed = sg_embed.squeeze(0)
+        # sg_embed = torch.cat([sg_embed] * out_shape[1], dim=0)
         
         return sg_embed  
 
