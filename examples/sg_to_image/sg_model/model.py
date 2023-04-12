@@ -200,6 +200,111 @@ class SIMSGModel(nn.Module):
         layers.append(nn.Conv2d(dim, output_dim, kernel_size=1))
         return nn.Sequential(*layers)
 
+    def enable_embedding(self):
+        self.eval()
+        # delete all layers after gcn_net
+        del self.decoder_net
+        del self.box_net
+        del self.mask_net
+
+    def encode_sg(self, triples, boxes_gt=None, max_length=(30, 226), out_shape=(1, 2, 64, 64)):
+        """
+        Encode a scene graph into a vector representation.
+
+        Inputs:
+        - triples: LongTensor of shape (num_triples, 3) where triples[t] = [s, p, o]
+          means that there is a triple (objs[s], p, objs[o])
+
+        Returns:
+        - sg_vec: FloatTensor of shape (D,) giving a vector representation of the scene graph
+        """
+        # Compute the text embedding for each object and predicate
+
+        s, p, o = triples.chunk(3, dim=1)  # All have shape (num_triples, 1)
+        s, p, o = [x.squeeze(1) for x in [s, p, o]]  # Now have shape (num_triples,)
+        edges = torch.stack([s, o], dim=1)  # Shape is (num_triples, 2)
+
+        objs = list(set(s.cpu().numpy().tolist() + o.cpu().numpy().tolist()))
+        # convert to torch tensor
+        objs = torch.tensor(objs, dtype=torch.long, device=triples.device)
+
+        obj_names = [self.vocab['object_idx_to_name'][i] for i in objs.cpu().numpy()]
+        p_names = [self.vocab['pred_idx_to_name'][i] for i in p.cpu().numpy()]
+        
+        # s_names = [self.vocab['object_idx_to_name'][i] for i in s.cpu().numpy()]
+        # o_names = [self.vocab['object_idx_to_name'][i] for i in o.cpu().numpy()]
+        
+        num_objs = len(objs)
+        obj_to_img = torch.zeros(num_objs, dtype=objs.dtype, device=objs.device)
+
+        # prepare keep indices
+        keep_box_idx = torch.ones_like(objs.unsqueeze(1), dtype=torch.float)
+        keep_feat_idx = torch.ones_like(objs.unsqueeze(1), dtype=torch.float)
+        # keep_image_idx = torch.ones_like(objs.unsqueeze(1), dtype=torch.float)
+
+        def embed_text(text):
+            # output shape: (num_objs, 10)
+            tokens = self.tokenizer(
+                text, max_length=10, padding="max_length", truncation=True, return_tensors="pt"
+            ).input_ids.to('cuda:0')
+
+            # output shape: (num_objs, 10, 1024)
+            vecs = self.text_encoder(tokens)[0]
+
+            # merge last two dimensions with view, output shape: (num_objs, 10240)
+            vecs = vecs.view(vecs.size(0), -1)
+
+            return vecs
+        
+        obj_vecs = embed_text(obj_names)
+        
+        if obj_to_img is None:
+            obj_to_img = torch.zeros(num_objs, dtype=objs.dtype, device=objs.device)
+
+        if not (self.is_baseline or self.is_supervised):
+
+            box_ones = torch.ones([num_objs, 1], dtype=boxes_gt.dtype, device=boxes_gt.device)
+            box_keep, _ = self.prepare_keep_idx(True, box_ones, out_shape[0], obj_to_img,
+                                                         keep_box_idx, keep_feat_idx)
+
+            boxes_prior = boxes_gt * box_keep
+
+            # if random_feats:
+            #     # fill with noise the high level visual features, if the feature is masked/dropped
+            #     normal_dist = tdist.Normal(loc=get_mean(self.spade_blocks), scale=get_std(self.spade_blocks))
+            #     highlevel_noise = normal_dist.sample([high_feats.shape[0]])
+            #     feats_prior += highlevel_noise.cuda() * (1 - feats_keep)
+
+            # # when a query image is used to generate an object of the same category
+            # if query_feats is not None:
+            #     feats_prior[query_idx] = query_feats
+
+            obj_vecs = torch.cat([obj_vecs, boxes_prior], dim=1)
+            obj_vecs = self.layer_norm(obj_vecs)
+
+        pred_vecs = embed_text(p_names)
+
+        # GCN pass
+        if isinstance(self.gconv, nn.Linear):
+            obj_vecs = self.gconv(obj_vecs)
+        else:
+            obj_vecs, pred_vecs = self.gconv(obj_vecs, pred_vecs, edges)
+        if self.gconv_net is not None:
+            obj_vecs, pred_vecs = self.gconv_net(obj_vecs, pred_vecs, edges)
+
+        obj_vecs = F.pad(obj_vecs, pad=(0, 0, max_length[0] - obj_vecs.size(0), 0))
+        pred_vecs = F.pad(pred_vecs, pad=(0, 0, max_length[1] - pred_vecs.size(0), 0))
+
+        # concat vectors
+        sg_embed = torch.cat([obj_vecs, pred_vecs], dim=0)
+
+        # resize vector with interpolation
+        sg_embed = F.interpolate(sg_embed.unsqueeze(0), size=(out_shape[-2], out_shape[-1]), mode='bilinear', align_corners=False)
+        sg_embed = sg_embed.squeeze(0)
+        sg_embed = torch.cat([sg_embed] * out_shape[0], dim=0)
+        
+        return sg_embed  
+
     def forward(self, objs, triples, obj_to_img=None, boxes_gt=None, masks_gt=None, src_image=None, imgs_src=None,
                 keep_box_idx=None, keep_feat_idx=None, keep_image_idx=None, combine_gt_pred_box_idx=None,
                 query_feats=None, mode='train', t=0, query_idx=0, random_feats=False, get_layout_boxes=False, get_conv_feats=False):

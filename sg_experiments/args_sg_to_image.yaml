@@ -1,0 +1,18 @@
+log_dir: sg_triplet2im
+script: sg_to_image.py
+
+dataset: erkam/clevr-with-depth-full-v2
+
+ckpt_name: stabilityai/stable-diffusion-2-base
+revision: None
+
+sg_ckpt_path: /mnt/simsg/clevr_models/spade_clip_64_clevr_model.pt
+
+model_params:
+  image_size: 512
+  # latent_size: [1, 4, 64, 64]
+  condition: [sg] # size: [256, 256]
+  text:
+    type: triplet
+    column: source_tri
+    value: None
