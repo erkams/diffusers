@@ -82,6 +82,7 @@ These are LoRA adaption weights for {base_model}. The weights were fine-tuned on
     with open(os.path.join(repo_folder, "README.md"), "w") as f:
         f.write(yaml + model_card)
 
+    print(f"*** Model card saved in {repo_folder} ***")
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Simple example of a training script.")
@@ -335,6 +336,7 @@ def parse_args():
             ' (default), `"wandb"` and `"comet_ml"`. Use `"all"` to report to all integrations.'
         ),
     )
+    parser.add_argument("--lora_rank", type=int, default=4, help="The rank of LoRA to use.")
     parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
     parser.add_argument(
         "--checkpointing_steps",
@@ -520,7 +522,7 @@ def main():
             block_id = int(name[len("down_blocks.")])
             hidden_size = unet.config.block_out_channels[block_id]
 
-        lora_attn_procs[name] = LoRAAttnProcessor(hidden_size=hidden_size, cross_attention_dim=cross_attention_dim)
+        lora_attn_procs[name] = LoRAAttnProcessor(hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, rank=args.lora_rank)
 
     unet.set_attn_processor(lora_attn_procs)
 
@@ -764,6 +766,7 @@ def main():
         val_sample = dataset['val'][0]
         val_sample[triplets_column] = [torch.tensor(val_sample[triplets_column], device=accelerator.device)]
         val_sample[boxes_column] = [torch.tensor(val_sample[boxes_column], device=accelerator.device)]
+        val_sample[objects_column] = [torch.tensor(val_sample[objects_column], device=accelerator.device)]
         val_sample[caption_column] = [val_sample[caption_column]]
         val_sample['sg_embeds'] = prepare_sg_embeds(val_sample)
         val_sample["input_ids"] = tokenize_captions(val_sample).to(accelerator.device)
@@ -820,8 +823,8 @@ def main():
         torch.cuda.empty_cache()
 
     # torch.backends.cudnn.enabled = False
-    # logger.info("***** Running validation check *****")
-    # validation_step(0)
+    logger.info("***** Running validation check *****")
+    validation_step(0)
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
@@ -861,6 +864,8 @@ def main():
     progress_bar = tqdm(range(global_step, args.max_train_steps), disable=not accelerator.is_local_main_process)
     progress_bar.set_description("Steps")
 
+    images = []
+    
     for epoch in range(first_epoch, args.num_train_epochs):
         unet.train()
         train_loss = 0.0
@@ -967,7 +972,7 @@ def main():
         if args.push_to_hub:
             save_model_card(
                 repo_id,
-                images=images,
+                images=images if images is not None else None,
                 base_model=args.pretrained_model_name_or_path,
                 dataset_name=args.dataset_name,
                 repo_folder=args.output_dir,
@@ -980,35 +985,50 @@ def main():
             )
 
     # Final inference
-    # Load previous pipeline
-    pipeline = StableDiffusionPipeline.from_pretrained(
-        args.pretrained_model_name_or_path, revision=args.revision, torch_dtype=weight_dtype
-    )
-    pipeline = pipeline.to(accelerator.device)
+    # val_sample = dataset['val'][0]
+    # val_sample[triplets_column] = [torch.tensor(val_sample[triplets_column], device=accelerator.device)]
+    # val_sample[boxes_column] = [torch.tensor(val_sample[boxes_column], device=accelerator.device)]
+    # val_sample[objects_column] = [torch.tensor(val_sample[objects_column], device=accelerator.device)]
+    # val_sample[caption_column] = [val_sample[caption_column]]
+    # val_sample['sg_embeds'] = prepare_sg_embeds(val_sample)
+    # val_sample["input_ids"] = tokenize_captions(val_sample).to(accelerator.device)
 
-    # load attention processors
-    pipeline.unet.load_attn_procs(args.output_dir)
+    # # Load previous pipeline
+    # pipeline = StableDiffusionPipeline.from_pretrained(
+    #     args.pretrained_model_name_or_path, revision=args.revision, torch_dtype=weight_dtype
+    # )
+    # pipeline = pipeline.to(accelerator.device)
 
-    # run inference
-    generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
-    images = []
-    for _ in range(args.num_validation_images):
-        images.append(pipeline(args.validation_prompt, num_inference_steps=30, generator=generator).images[0])
+    # # load attention processors
+    # pipeline.unet.load_attn_procs(args.output_dir)
 
-    if accelerator.is_main_process:
-        for tracker in accelerator.trackers:
-            if tracker.name == "tensorboard":
-                np_images = np.stack([np.asarray(img) for img in images])
-                tracker.writer.add_images("test", np_images, epoch, dataformats="NHWC")
-            if tracker.name == "wandb":
-                tracker.log(
-                    {
-                        "test": [
-                            wandb.Image(image, caption=f"{i}: {args.validation_prompt}")
-                            for i, image in enumerate(images)
-                        ]
-                    }
-                )
+    # encoder_hidden_states = text_encoder(val_sample["input_ids"])[0]
+
+    # if args.cond_place == 'attn':
+    #     prompt_embeds = torch.cat((encoder_hidden_states, val_sample['sg_embeds']), dim=1)
+    # else:
+    #     prompt_embeds = encoder_hidden_states
+
+    # # run inference
+    # generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
+    # images = []
+    # for _ in range(args.num_validation_images):
+    #     images.append(pipeline(prompt_embeds=prompt_embeds, num_inference_steps=30, generator=generator).images[0])
+
+    # if accelerator.is_main_process:
+    #     for tracker in accelerator.trackers:
+    #         if tracker.name == "tensorboard":
+    #             np_images = np.stack([np.asarray(img) for img in images])
+    #             tracker.writer.add_images("test", np_images, epoch, dataformats="NHWC")
+    #         if tracker.name == "wandb":
+    #             tracker.log(
+    #                 {
+    #                     "test": [
+    #                         wandb.Image(image, caption=f"{i}: {args.validation_prompt}")
+    #                         for i, image in enumerate(images)
+    #                     ]
+    #                 }
+    #             )
 
     accelerator.end_training()
 
