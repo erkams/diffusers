@@ -21,6 +21,7 @@ import PIL
 import torch
 from packaging import version
 from transformers import CLIPTextModel, CLIPTokenizer, DPTFeatureExtractor, DPTForDepthEstimation
+import matplotlib.pyplot as plt
 
 from ...configuration_utils import FrozenDict
 from ...loaders import TextualInversionLoaderMixin
@@ -55,7 +56,7 @@ def preprocess(image):
     return image
 
 
-class StableDiffusionDepth2ImgPipeline(DiffusionPipeline, TextualInversionLoaderMixin):
+class StableDiffusionDebugDepth2ImgPipeline(DiffusionPipeline, TextualInversionLoaderMixin):
     r"""
     Pipeline for text-guided image to image generation using Stable Diffusion.
 
@@ -88,9 +89,12 @@ class StableDiffusionDepth2ImgPipeline(DiffusionPipeline, TextualInversionLoader
         depth_estimator: DPTForDepthEstimation,
         feature_extractor: DPTFeatureExtractor,
         pass_init_image: bool = True,
+        disable_depth: bool = False,
     ):
         super().__init__()
+        print("StableDiffusionDebugDepth2ImgPipeline")
         self.pass_init_image = pass_init_image
+        self.disable_depth = disable_depth
         is_unet_version_less_0_9_0 = hasattr(unet.config, "_diffusers_version") and version.parse(
             version.parse(unet.config._diffusers_version).base_version
         ) < version.parse("0.9.0.dev0")
@@ -421,7 +425,9 @@ class StableDiffusionDepth2ImgPipeline(DiffusionPipeline, TextualInversionLoader
             init_latents = self.vae.encode(image).latent_dist.sample(generator)
 
         init_latents = self.vae.config.scaling_factor * init_latents
-
+        print(f'init_latents.shape: {init_latents.shape}')
+        plt.imshow(init_latents[0][:3,:,:].clip(0,1).cpu().detach().to(dtype=torch.float32).permute(1,2,0))
+        plt.show()
         if batch_size > init_latents.shape[0] and batch_size % init_latents.shape[0] == 0:
             # expand init_latents for batch_size
             deprecation_message = (
@@ -473,6 +479,8 @@ class StableDiffusionDepth2ImgPipeline(DiffusionPipeline, TextualInversionLoader
             context_manger = torch.autocast("cuda", dtype=dtype) if device.type == "cuda" else contextlib.nullcontext()
             with context_manger:
                 depth_map = self.depth_estimator(pixel_values).predicted_depth
+                print(f'predicted depth map shape: {depth_map.shape}')
+                
         else:
             depth_map = depth_map.to(device=device, dtype=dtype)
 
@@ -482,7 +490,9 @@ class StableDiffusionDepth2ImgPipeline(DiffusionPipeline, TextualInversionLoader
             mode="bicubic",
             align_corners=False,
         )
-
+        print(f'interpolated depth map shape: {depth_map.shape}')
+        plt.imshow(depth_map.squeeze().cpu().numpy())
+        plt.show()
         depth_min = torch.amin(depth_map, dim=[1, 2, 3], keepdim=True)
         depth_max = torch.amax(depth_map, dim=[1, 2, 3], keepdim=True)
         depth_map = 2.0 * (depth_map - depth_min) / (depth_max - depth_min) - 1.0
@@ -580,9 +590,9 @@ class StableDiffusionDepth2ImgPipeline(DiffusionPipeline, TextualInversionLoader
         >>> import requests
         >>> from PIL import Image
 
-        >>> from diffusers import StableDiffusionDepth2ImgPipeline
+        >>> from diffusers import StableDiffusionDebugDepth2ImgPipeline
 
-        >>> pipe = StableDiffusionDepth2ImgPipeline.from_pretrained(
+        >>> pipe = StableDiffusionDebugDepth2ImgPipeline.from_pretrained(
         ...     "stabilityai/stable-diffusion-2-depth",
         ...     torch_dtype=torch.float16,
         ... )
@@ -650,9 +660,15 @@ class StableDiffusionDepth2ImgPipeline(DiffusionPipeline, TextualInversionLoader
             prompt_embeds.dtype,
             device,
         )
+        if self.disable_depth:
+            depth_mask = torch.zeros_like(depth_mask)
+            print(f'DISABLE DEPTH')
         
+        print(f'DEPTH MASK SHAPE: {depth_mask.shape}')
+
         # 5. Preprocess image
         image = preprocess(image)
+        print(f'IMAGE SHAPE: {image.shape}')
 
         # 6. Set timesteps
         self.scheduler.set_timesteps(num_inference_steps, device=device)
@@ -668,7 +684,9 @@ class StableDiffusionDepth2ImgPipeline(DiffusionPipeline, TextualInversionLoader
             latents = self.prepare_latents(
                 image, latent_timestep, batch_size, num_images_per_prompt, prompt_embeds.dtype, device, generator
             )
-
+        print(f'LATENTS SHAPE: {latents.shape}')
+        plt.imshow(latents[0, 0, :, :].cpu().detach().numpy())
+        plt.show()
         # 8. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
 
@@ -678,6 +696,8 @@ class StableDiffusionDepth2ImgPipeline(DiffusionPipeline, TextualInversionLoader
             for i, t in enumerate(timesteps):
                 # expand the latents if we are doing classifier free guidance
                 latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
+                print(f'LATENT MODEL INPUT SHAPE: {latent_model_input.shape}') if i == 0 else None
+
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
                 
                 if self.condition_on_initial_image:
@@ -685,6 +705,7 @@ class StableDiffusionDepth2ImgPipeline(DiffusionPipeline, TextualInversionLoader
                 else:
                     latent_model_input = torch.cat([latent_model_input, depth_mask], dim=1)
 
+                print(f'LATENT MODEL INPUT SHAPE AFTER CONCAT: {latent_model_input.shape}') if i == 0 else None
                 # predict the noise residual
                 noise_pred = self.unet(latent_model_input, t, encoder_hidden_states=prompt_embeds).sample
 
