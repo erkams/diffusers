@@ -47,7 +47,7 @@ from diffusers.optimization import get_scheduler
 from diffusers.utils import check_min_version, is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
 
-from sg_model import SIMSGModel
+from simsg import SIMSGModel
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.15.0.dev0")
@@ -631,6 +631,7 @@ def main():
         max_length=(12, 66)
         sg_embeds = []
         for triplets, boxes in zip(examples[triplets_column], examples[boxes_column]):
+            random.shuffle(triplets)
             embed = sg_net.encode_sg(triplets, boxes, max_length=max_length, batch_size=args.train_batch_size)
             sg_embeds.append(embed)
 
@@ -748,9 +749,10 @@ def main():
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
     def validation_step(epoch):
+        validation_prompt = val_sample["pos_prompt"]
         logger.info(
             f"Running validation... \n Generating {args.num_validation_images} images with prompt:"
-            f" {args.validation_prompt}."
+            f" {validation_prompt}."
         )
 
         # create pipeline
@@ -786,7 +788,7 @@ def main():
                 tracker.log(
                     {
                         "validation": [
-                            wandb.Image(image, caption=f"{i}: {args.validation_prompt}")
+                            wandb.Image(image, caption=f"{i}: {validation_prompt}")
                             for i, image in enumerate(images)
                         ]
                     }
