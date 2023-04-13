@@ -837,9 +837,6 @@ def main():
                     }
                 )
                 print(f'{len(images)} image is uploaded to wandb')
-        del pipeline
-        del val_sample
-        # torch.cuda.empty_cache()
 
     # torch.backends.cudnn.enabled = False
     logger.info("***** Running validation check *****")
