@@ -418,7 +418,14 @@ class StableDiffusionPipeline(DiffusionPipeline, TextualInversionLoaderMixin):
             # Here we concatenate the unconditional and text embeddings into a single batch
             # to avoid doing two forward passes
             if negative_prompt_embeds.shape[1] != prompt_embeds.shape[1]:
-                negative_prompt_embeds = torch.cat((negative_prompt_embeds, -1 * prompt_embeds[:,negative_prompt_embeds.shape[1]:,:]), dim=1)
+                pad = torch.zeros(
+                    negative_prompt_embeds.shape[0],
+                    prompt_embeds.shape[1] - negative_prompt_embeds.shape[1],
+                    negative_prompt_embeds.shape[2],
+                    device=device,
+                    dtype=negative_prompt_embeds.dtype,
+                )
+                negative_prompt_embeds = torch.cat((negative_prompt_embeds, pad), dim=1)
 
             prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds])
 
