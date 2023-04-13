@@ -168,6 +168,17 @@ def parse_args():
         help="Where to append the condition",
     )
     parser.add_argument(
+        "--const_train_prompt", type=str, default="", help="A prompt to be used constantly for training as a prefix to the caption."
+    )
+    parser.add_argument(
+        "--disable_caption",
+        default=False,
+        action="store_true",
+        help=(
+            "Whether to disable captions during training. Check if you have something else to condition on, like scene graphs."
+        ),
+    )
+    parser.add_argument(
         "--validation_prompt", type=str, default=None, help="A prompt that is sampled during training for inference."
     )
     parser.add_argument(
@@ -660,12 +671,19 @@ def main():
 
         return sg_embed
 
+    def get_caption(caption):
+        if args.disable_caption:
+            return args.const_train_prompt
+        else:
+            return caption
+    
     # Preprocessing the datasets.
     # We need to tokenize input captions and transform the images.
     def tokenize_captions(examples, is_train=True):
 
         captions = []
         for caption in examples[caption_column]:
+            caption = get_caption(caption)
             if isinstance(caption, str):
                 if args.shuffle_triplets:
                     triplets = caption.split(', ')
@@ -818,9 +836,10 @@ def main():
                         ]
                     }
                 )
+                print(f'{len(images)} image is uploaded to wandb')
         del pipeline
         del val_sample
-        torch.cuda.empty_cache()
+        # torch.cuda.empty_cache()
 
     # torch.backends.cudnn.enabled = False
     logger.info("***** Running validation check *****")
@@ -863,8 +882,6 @@ def main():
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(range(global_step, args.max_train_steps), disable=not accelerator.is_local_main_process)
     progress_bar.set_description("Steps")
-
-    images = []
     
     for epoch in range(first_epoch, args.num_train_epochs):
         unet.train()
@@ -960,7 +977,7 @@ def main():
                 break
 
         if accelerator.is_main_process:
-            if args.validation_prompt is not None and epoch % args.validation_epochs == 0:
+            if epoch % args.validation_epochs == 0:
                 validation_step(epoch)
 
     # Save the lora layers

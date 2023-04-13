@@ -147,6 +147,8 @@ runs
 /examples/text_to_image/sd-pokemon-model
 /examples/text_to_image/sd-pokemon-model-lora
 /examples/text_to_image/wandb
+/examples/sg_to_image/wandb
+/examples/sg_to_image/sd-clevr-sg2im
 
 # data
 /data
