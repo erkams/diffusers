@@ -701,9 +701,13 @@ class StableDiffusionDebugDepth2ImgPipeline(DiffusionPipeline, TextualInversionL
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
                 
                 if self.condition_on_initial_image:
-                    latent_model_input = torch.cat([latent_model_input, init_latents, depth_mask], dim=1)
+                    if self.disable_depth:
+                        latent_model_input = torch.cat([latent_model_input, init_latents], dim=1)
+                    else:
+                        latent_model_input = torch.cat([latent_model_input, init_latents, depth_mask], dim=1)
                 else:
-                    latent_model_input = torch.cat([latent_model_input, depth_mask], dim=1)
+                    if not self.disable_depth:
+                        latent_model_input = torch.cat([latent_model_input, depth_mask], dim=1)
 
                 print(f'LATENT MODEL INPUT SHAPE AFTER CONCAT: {latent_model_input.shape}') if i == 0 else None
                 # predict the noise residual
