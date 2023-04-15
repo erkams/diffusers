@@ -192,6 +192,12 @@ def parse_args():
         help="Number of images that should be generated during validation with `validation_prompt`.",
     )
     parser.add_argument(
+        "--num_eval_images",
+        type=int,
+        default=20,
+        help="Number of images that should be generated during evaluation during training.",
+    )
+    parser.add_argument(
         "--validation_epochs",
         type=int,
         default=1,
@@ -930,7 +936,7 @@ def main():
     global_step = 0
     first_epoch = 0
     images = []
-    
+
     # Potentially load in the weights and states from a previous save
     if args.resume_from_checkpoint:
         if args.resume_from_checkpoint != "latest":
