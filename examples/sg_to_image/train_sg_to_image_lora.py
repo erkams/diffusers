@@ -49,6 +49,9 @@ from diffusers.utils.import_utils import is_xformers_available
 
 from simsg import SIMSGModel
 
+from utils import HFDataset, ListDataset
+import torch_fidelity
+
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.15.0.dev0")
 
@@ -171,9 +174,10 @@ def parse_args():
         "--const_train_prompt", type=str, default="", help="A prompt to be used constantly for training as a prefix to the caption."
     )
     parser.add_argument(
-        "--disable_caption",
-        default=False,
-        action="store_true",
+        "--caption_type",
+        type=str,
+        default="full",
+        choices=["const", "triplets", "objects"],
         help=(
             "Whether to disable captions during training. Check if you have something else to condition on, like scene graphs."
         ),
@@ -327,6 +331,7 @@ def parse_args():
             " *output_dir/runs/**CURRENT_DATETIME_HOSTNAME***."
         ),
     )
+    parser.add_argument('--leading_metric', type=str, default='FID', choices=('ISC', 'FID', 'KID', 'PPL'))
     parser.add_argument(
         "--mixed_precision",
         type=str,
@@ -427,6 +432,15 @@ def main():
         level=logging.INFO,
     )
     logger.info(accelerator.state, main_process_only=False)
+
+    # Setup metrics
+    leading_metric, last_best_metric, metric_greater_cmp = {
+        'ISC': (torch_fidelity.KEY_METRIC_ISC_MEAN, 0.0, float.__gt__),
+        'FID': (torch_fidelity.KEY_METRIC_FID, float('inf'), float.__lt__),
+        'KID': (torch_fidelity.KEY_METRIC_KID_MEAN, float('inf'), float.__lt__),
+        'PPL': (torch_fidelity.KEY_METRIC_PPL_MEAN, float('inf'), float.__lt__),
+    }[args.leading_metric]
+
     if accelerator.is_local_main_process:
         datasets.utils.logging.set_verbosity_warning()
         transformers.utils.logging.set_verbosity_warning()
@@ -648,11 +662,12 @@ def main():
                 f"--objects_column' value '{args.objects_column}' needs to be one of: {', '.join(column_names)}"
             )
     
-    def prepare_sg_embeds(examples):
+    def prepare_sg_embeds(examples, is_train=True):
         max_length=(7, 21)
         sg_embeds = []
         for triplets, boxes, objects in zip(examples[triplets_column], examples[boxes_column], examples[objects_column]):
-            random.shuffle(triplets)
+            if is_train:
+                random.shuffle(triplets)
             embed = sg_net.encode_sg(triplets, objects, boxes, max_length=max_length, batch_size=args.train_batch_size)
             sg_embeds.append(embed)
 
@@ -672,20 +687,26 @@ def main():
         return sg_embed
 
     def get_caption(caption):
-        if args.disable_caption:
+        if args.caption_type == 'const':
             return args.const_train_prompt
-        else:
+        elif args.caption_type == 'objects':
+            objects = list(set(caption.replace(' is right of', ',')
+                     .replace(' is left of', ',')
+                     .replace(' is front of', ',')
+                     .replace(' is behind', ',')
+                     .split(', ')))
+            return ", ".join(objects)
+        elif args.caption_type == 'triplets':
             return caption
     
     # Preprocessing the datasets.
     # We need to tokenize input captions and transform the images.
     def tokenize_captions(examples, is_train=True):
-
         captions = []
         for caption in examples[caption_column]:
             caption = get_caption(caption)
             if isinstance(caption, str):
-                if args.shuffle_triplets:
+                if is_train and args.shuffle_triplets:
                     triplets = caption.split(', ')
                     caption = ", ".join(random.sample(triplets, len(triplets)))
                 captions.append(caption)
@@ -721,7 +742,15 @@ def main():
         examples["input_ids"] = tokenize_captions(examples)
         examples["sg_embeds"] = prepare_sg_embeds(examples)
         return examples
-
+    
+    def preprocess_val(examples):
+        examples[triplets_column] = [torch.tensor(triplets, device=accelerator.device) for triplets in examples[triplets_column]]
+        examples[boxes_column] = [torch.tensor(boxes, device=accelerator.device) for boxes in examples[boxes_column]]
+        examples[objects_column] = [torch.tensor(objects, device=accelerator.device) for objects in examples[objects_column]]
+        examples["input_ids"] = tokenize_captions(examples, is_train=False)
+        examples["sg_embeds"] = prepare_sg_embeds(examples, is_train=False)
+        return examples
+        
     with accelerator.main_process_first():
         if args.max_train_samples is not None:
             dataset["train"] = dataset["train"].shuffle(seed=args.seed).select(range(args.max_train_samples))
@@ -820,7 +849,7 @@ def main():
         
         for _ in range(args.num_validation_images):
             images.append(
-                pipeline(prompt_embeds=prompt_embeds, num_inference_steps=30, generator=generator).images[0]
+                pipeline(prompt_embeds=prompt_embeds, num_inference_steps=50, generator=generator).images[0]
             )
 
         for tracker in accelerator.trackers:
@@ -836,11 +865,61 @@ def main():
                         ]
                     }
                 )
-                print(f'{len(images)} image is uploaded to wandb')
+    
+    def evaluation_step(global_step):
+        # Calculate FID metric on a subset of validation images
+        logger.info(
+            f"Running evaluation... \n Generating {args.num_eval_images} images"
+        )
+
+        # create pipeline
+        pipeline = StableDiffusionPipeline.from_pretrained(
+            args.pretrained_model_name_or_path,
+            unet=accelerator.unwrap_model(unet),
+            revision=args.revision,
+            torch_dtype=weight_dtype,
+        )
+        pipeline = pipeline.to(accelerator.device)
+        pipeline.set_progress_bar_config(disable=True)
+
+        # run inference
+        generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
+        images = []
+        
+        val_dset = dataset['val'].with_transform(preprocess_val)[:args.num_eval_images]
+
+        for input_ids, sg_embeds in zip(val_dset['input_ids'], val_dset['sg_embeds']):
+            encoder_hidden_states = text_encoder(input_ids)[0]
+
+            print(f'***VAL*** sg embed shape: {sg_embeds.shape}') if global_step == 0 else None
+
+            if args.cond_place == 'attn':
+                prompt_embeds = torch.cat((encoder_hidden_states, sg_embeds), dim=1)
+            else:
+                prompt_embeds = encoder_hidden_states
+            
+            images.append(
+                pipeline(prompt_embeds=prompt_embeds, num_inference_steps=30, generator=generator).images[0]
+            )
+        metrics = torch_fidelity.calculate_metrics(
+            input1=ListDataset(images),
+            input2=ListDataset(dataset['val'][:args.num_eval_images][image_column]),
+            cuda=True, 
+            isc=True, 
+            fid=True, 
+            kid=False, 
+            verbose=False)
+        
+        accelerator.log({args.leading_metric.upper(): metrics[leading_metric]}, step=global_step)
+
+        # save the generator if it improved
+        if metric_greater_cmp(metrics[leading_metric], last_best_metric):
+            print(f'Leading metric {args.leading_metric} improved from {last_best_metric} to {metrics[leading_metric]}')
+            last_best_metric = metrics[leading_metric]
 
     # torch.backends.cudnn.enabled = False
     logger.info("***** Running validation check *****")
-    validation_step(0)
+    evaluation_step(0)
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
@@ -850,7 +929,8 @@ def main():
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
     global_step = 0
     first_epoch = 0
-
+    images = []
+    
     # Potentially load in the weights and states from a previous save
     if args.resume_from_checkpoint:
         if args.resume_from_checkpoint != "latest":
@@ -976,6 +1056,8 @@ def main():
         if accelerator.is_main_process:
             if epoch % args.validation_epochs == 0:
                 validation_step(epoch)
+            if epoch % 2 * args.validation_epochs == 0:
+                evaluation_step(global_step)
 
     # Save the lora layers
     accelerator.wait_for_everyone()
