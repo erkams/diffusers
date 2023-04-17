@@ -688,7 +688,10 @@ def main():
 
         elif args.cond_place == 'attn':
             out_shape = (1, sum(max_length), 1024)
-            sg_embed = sg_embed.repeat(1, 1, out_shape[2]//sg_embed.shape[2])
+            zeros = torch.zeros_like(sg_embed)
+            pad = torch.cat([zeros] * 3, dim=-1) # hardcoded for 3 now = out_shape[2]//sg_embed.shape[2] - 1
+            sg_embed = torch.cat([sg_embed, pad], dim=-1)
+            # sg_embed = sg_embed.repeat(1, 1, out_shape[2]//sg_embed.shape[2])
 
         return sg_embed
 
@@ -753,7 +756,7 @@ def main():
         examples[triplets_column] = [torch.tensor(triplets, device=accelerator.device) for triplets in examples[triplets_column]]
         examples[boxes_column] = [torch.tensor(boxes, device=accelerator.device) for boxes in examples[boxes_column]]
         examples[objects_column] = [torch.tensor(objects, device=accelerator.device) for objects in examples[objects_column]]
-        examples["input_ids"] = tokenize_captions(examples, is_train=False)
+        examples["input_ids"] = tokenize_captions(examples, is_train=False).to(accelerator.device)
         examples["sg_embeds"] = prepare_sg_embeds(examples, is_train=False)
         return examples
         
@@ -824,7 +827,7 @@ def main():
         val_sample['sg_embeds'] = prepare_sg_embeds(val_sample)
         val_sample["input_ids"] = tokenize_captions(val_sample).to(accelerator.device)
 
-        validation_prompt = val_sample["pos_prompt"]
+        validation_prompt = get_caption(val_sample[caption_column][0])
         logger.info(
             f"Running validation... \n Generating {args.num_validation_images} images with prompt:"
             f" {validation_prompt}."
@@ -873,6 +876,7 @@ def main():
                 )
     
     def evaluation_step(global_step):
+        nonlocal last_best_metric
         # Calculate FID metric on a subset of validation images
         logger.info(
             f"Running evaluation... \n Generating {args.num_eval_images} images"
@@ -895,6 +899,9 @@ def main():
         val_dset = dataset['val'].with_transform(preprocess_val)[:args.num_eval_images]
 
         for input_ids, sg_embeds in zip(val_dset['input_ids'], val_dset['sg_embeds']):
+
+            input_ids = input_ids.unsqueeze(0).to(accelerator.device)
+            sg_embeds = sg_embeds.unsqueeze(0).to(accelerator.device)
             encoder_hidden_states = text_encoder(input_ids)[0]
 
             print(f'***VAL*** sg embed shape: {sg_embeds.shape}') if global_step == 0 else None
@@ -905,7 +912,7 @@ def main():
                 prompt_embeds = encoder_hidden_states
             
             images.append(
-                pipeline(prompt_embeds=prompt_embeds, num_inference_steps=30, generator=generator).images[0]
+                pipeline(prompt_embeds=prompt_embeds, num_inference_steps=50, generator=generator).images[0]
             )
         metrics = torch_fidelity.calculate_metrics(
             input1=ListDataset(images),
@@ -924,8 +931,8 @@ def main():
             last_best_metric = metrics[leading_metric]
 
     # torch.backends.cudnn.enabled = False
-    logger.info("***** Running validation check *****")
-    evaluation_step(0)
+    # logger.info("***** Running validation check *****")
+    # evaluation_step(0)
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
@@ -1060,10 +1067,12 @@ def main():
                 break
 
         if accelerator.is_main_process:
+            if epoch % (4 * args.validation_epochs) == 0:
+                print(f'***EVALUATION AT EPOCH {epoch}***')
+                evaluation_step(global_step)
+
             if epoch % args.validation_epochs == 0:
                 validation_step(epoch)
-            if epoch % 2 * args.validation_epochs == 0:
-                evaluation_step(global_step)
 
     # Save the lora layers
     accelerator.wait_for_everyone()

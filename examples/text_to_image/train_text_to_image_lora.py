@@ -826,9 +826,6 @@ def main():
                             }
                         )
 
-                del pipeline
-                torch.cuda.empty_cache()
-
     # Save the lora layers
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:

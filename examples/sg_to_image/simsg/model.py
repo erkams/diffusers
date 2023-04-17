@@ -214,7 +214,7 @@ class SIMSGModel(nn.Module):
         del self.mask_net
         torch.cuda.empty_cache()
 
-    def encode_sg(self, triples, objects=None, boxes_gt=None, max_length=(12, 66), batch_size=1):
+    def encode_sg(self, triples, objects=None, boxes_gt=None, max_length=(12, 66), batch_size=1, include_text_embeddings=False):
         """
         Encode a scene graph into a vector representation.
 
@@ -223,7 +223,7 @@ class SIMSGModel(nn.Module):
           means that there is a triple (objs[s], p, objs[o])
 
         Returns:
-        - sg_vec: FloatTensor of shape (D,) giving a vector representation of the scene graph
+        - sg_vec: FloatTensor of shape (sum(max_length), 256) giving a vector representation of the scene graph
         """
         # Compute the text embedding for each object and predicate
 
