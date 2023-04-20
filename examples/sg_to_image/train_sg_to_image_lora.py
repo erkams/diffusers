@@ -177,7 +177,7 @@ def parse_args():
         "--caption_type",
         type=str,
         default="full",
-        choices=["const", "triplets", "objects"],
+        choices=["none", "const", "triplets", "objects"],
         help=(
             "Whether to disable captions during training. Check if you have something else to condition on, like scene graphs."
         ),
@@ -711,6 +711,8 @@ def main():
     # Preprocessing the datasets.
     # We need to tokenize input captions and transform the images.
     def tokenize_captions(examples, is_train=True):
+        if args.caption_type == 'none':
+            return torch.zeros((1,1), device=accelerator.device)
         captions = []
         for caption in examples[caption_column]:
             caption = get_caption(caption)
@@ -817,6 +819,23 @@ def main():
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
+    def handle_hidden_states(input_ids=None, condition=None):
+        if args.caption_type != 'none':
+            encoder_hidden_states = text_encoder(input_ids)[0]
+
+        if args.cond_place == 'attn':
+            if args.caption_type != 'none':
+                prompt_embeds = torch.cat((encoder_hidden_states, condition), dim=1)
+            else:
+                prompt_embeds = condition
+        else:
+            if args.caption_type != 'none':
+                prompt_embeds = encoder_hidden_states
+            else:
+                ValueError('caption_type can\'t be none if cond_place is not attn')
+
+        return prompt_embeds
+
     def validation_step(epoch):
         # Prepare validation sample
         val_sample = dataset['val'][0]
@@ -846,19 +865,15 @@ def main():
         # run inference
         generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
         images = []
-
-        encoder_hidden_states = text_encoder(val_sample["input_ids"])[0]
-
+        
         print(f'***VAL*** sg embed shape: {val_sample["sg_embeds"].shape}') if epoch == 0 else None
 
-        if args.cond_place == 'attn':
-            prompt_embeds = torch.cat((encoder_hidden_states, val_sample['sg_embeds']), dim=1)
-        else:
-            prompt_embeds = encoder_hidden_states
-        
         for _ in range(args.num_validation_images):
             images.append(
-                pipeline(prompt_embeds=prompt_embeds, num_inference_steps=50, generator=generator).images[0]
+                pipeline(prompt_embeds=
+                         handle_hidden_states(input_ids=val_sample["input_ids"], condition=val_sample["sg_embeds"]), 
+                         num_inference_steps=30, 
+                         generator=generator).images[0]
             )
 
         for tracker in accelerator.trackers:
@@ -902,17 +917,10 @@ def main():
 
             input_ids = input_ids.unsqueeze(0).to(accelerator.device)
             sg_embeds = sg_embeds.unsqueeze(0).to(accelerator.device)
-            encoder_hidden_states = text_encoder(input_ids)[0]
-
             print(f'***VAL*** sg embed shape: {sg_embeds.shape}') if global_step == 0 else None
-
-            if args.cond_place == 'attn':
-                prompt_embeds = torch.cat((encoder_hidden_states, sg_embeds), dim=1)
-            else:
-                prompt_embeds = encoder_hidden_states
             
             images.append(
-                pipeline(prompt_embeds=prompt_embeds, num_inference_steps=50, generator=generator).images[0]
+                pipeline(prompt_embeds=handle_hidden_states(input_ids=input_ids, condition=sg_embeds), num_inference_steps=50, generator=generator).images[0]
             )
         metrics = torch_fidelity.calculate_metrics(
             input1=ListDataset(images),
@@ -1016,12 +1024,6 @@ def main():
                 if args.cond_place == 'latent':
                     noisy_latents = torch.cat([noisy_latents, batch['sg_embeds']], dim=1)
 
-                # Get the text embedding for conditioning
-                encoder_hidden_states = text_encoder(batch["input_ids"])[0]
-
-                if args.cond_place == 'attn':
-                    encoder_hidden_states = torch.cat([encoder_hidden_states, batch['sg_embeds']], dim=1)
-
                 # Get the target for loss depending on the prediction type
                 if noise_scheduler.config.prediction_type == "epsilon":
                     target = noise
@@ -1031,7 +1033,7 @@ def main():
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
                 # Predict the noise residual and compute loss
-                model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
+                model_pred = unet(noisy_latents, timesteps, handle_hidden_states(input_ids=batch["input_ids"], condition=batch['sg_embeds'])).sample
                 loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
 
                 # Gather the losses across all processes for logging (if we use distributed training).
