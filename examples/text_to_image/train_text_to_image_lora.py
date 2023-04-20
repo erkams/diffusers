@@ -705,8 +705,11 @@ def main():
 
         prompts = dataset['val'][:args.num_eval_images][args.caption_column]
         
-        images = pipeline(prompts, num_inference_steps=30, generator=generator).images
-
+        images = []
+        for prompt in prompts:
+            images.append(
+                pipeline(prompt, num_inference_steps=30, generator=generator).images[0]
+            )
         # calculate FID
         metrics = torch_fidelity.calculate_metrics(
             input1=ListDataset(images),
@@ -728,6 +731,7 @@ def main():
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
+    evaluation_step(0)
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
