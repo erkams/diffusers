@@ -712,7 +712,7 @@ def main():
     # We need to tokenize input captions and transform the images.
     def tokenize_captions(examples, is_train=True):
         if args.caption_type == 'none':
-            return torch.zeros((1,1), device=accelerator.device)
+            return torch.zeros((len(examples[caption_column]),77), device=accelerator.device)
         captions = []
         for caption in examples[caption_column]:
             caption = get_caption(caption)
@@ -872,6 +872,8 @@ def main():
             images.append(
                 pipeline(prompt_embeds=
                          handle_hidden_states(input_ids=val_sample["input_ids"], condition=val_sample["sg_embeds"]), 
+                         height= args.resolution,
+                         width= args.resolution,
                          num_inference_steps=30, 
                          generator=generator).images[0]
             )
@@ -914,14 +916,12 @@ def main():
         val_dset = dataset['val'].with_transform(preprocess_val)[:args.num_eval_images]
 
         for input_ids, sg_embeds in zip(val_dset['input_ids'], val_dset['sg_embeds']):
-
             input_ids = input_ids.unsqueeze(0).to(accelerator.device)
             sg_embeds = sg_embeds.unsqueeze(0).to(accelerator.device)
             print(f'***VAL*** sg embed shape: {sg_embeds.shape}') if global_step == 0 else None
             
-            images.append(
-                pipeline(prompt_embeds=handle_hidden_states(input_ids=input_ids, condition=sg_embeds), num_inference_steps=50, generator=generator).images[0]
-            )
+            images.append(pipeline(prompt_embeds=handle_hidden_states(input_ids=input_ids, condition=sg_embeds), height= args.resolution, width= args.resolution, num_inference_steps=30, generator=generator).images[0])
+        
         metrics = torch_fidelity.calculate_metrics(
             input1=ListDataset(images),
             input2=ListDataset(dataset['val'][:args.num_eval_images][image_column]),
@@ -939,8 +939,8 @@ def main():
             last_best_metric = metrics[leading_metric]
 
     # torch.backends.cudnn.enabled = False
-    # logger.info("***** Running validation check *****")
-    # evaluation_step(0)
+    logger.info("***** Running eval check *****")
+    evaluation_step(0)
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
