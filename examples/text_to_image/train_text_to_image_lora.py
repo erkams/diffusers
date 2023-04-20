@@ -47,6 +47,8 @@ from diffusers.optimization import get_scheduler
 from diffusers.utils import check_min_version, is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
 
+import torch_fidelity
+from utils import ListDataset
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.15.0.dev0")
@@ -141,6 +143,12 @@ def parse_args():
         type=int,
         default=4,
         help="Number of images that should be generated during validation with `validation_prompt`.",
+    )
+    parser.add_argument(
+        "--num_eval_images",
+        type=int,
+        default=20,
+        help="Number of images that should be generated during evaluation during training.",
     )
     parser.add_argument(
         "--validation_epochs",
@@ -282,6 +290,7 @@ def parse_args():
             " *output_dir/runs/**CURRENT_DATETIME_HOSTNAME***."
         ),
     )
+    parser.add_argument('--leading_metric', type=str, default='FID', choices=('ISC', 'FID', 'KID', 'PPL'))
     parser.add_argument(
         "--mixed_precision",
         type=str,
@@ -382,6 +391,15 @@ def main():
         level=logging.INFO,
     )
     logger.info(accelerator.state, main_process_only=False)
+
+    # Setup metrics
+    leading_metric, last_best_metric, metric_greater_cmp = {
+        'ISC': (torch_fidelity.KEY_METRIC_ISC_MEAN, 0.0, float.__gt__),
+        'FID': (torch_fidelity.KEY_METRIC_FID, float('inf'), float.__lt__),
+        'KID': (torch_fidelity.KEY_METRIC_KID_MEAN, float('inf'), float.__lt__),
+        'PPL': (torch_fidelity.KEY_METRIC_PPL_MEAN, float('inf'), float.__lt__),
+    }[args.leading_metric]
+
     if accelerator.is_local_main_process:
         datasets.utils.logging.set_verbosity_warning()
         transformers.utils.logging.set_verbosity_warning()
@@ -581,7 +599,7 @@ def main():
         captions = []
         for caption in examples[caption_column]:
             if isinstance(caption, str):
-                if args.shuffle_triplets:
+                if is_train and args.shuffle_triplets:
                     triplets = caption.split(', ')
                     caption = ", ".join(random.sample(triplets, len(triplets)))
                 captions.append(caption)
@@ -665,6 +683,47 @@ def main():
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
         accelerator.init_trackers("text2image-fine-tune", config=vars(args))
+
+    def evaluation_step(global_step):
+        nonlocal last_best_metric
+        # Calculate FID metric on a subset of validation images
+        logger.info(
+            f"Running evaluation... \n Generating {args.num_eval_images} images"
+        )
+
+        pipeline = DiffusionPipeline.from_pretrained(
+            args.pretrained_model_name_or_path,
+            unet=accelerator.unwrap_model(unet),
+            revision=args.revision,
+            torch_dtype=weight_dtype,
+        )
+        pipeline = pipeline.to(accelerator.device)
+        pipeline.set_progress_bar_config(disable=True)
+
+        # run inference
+        generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
+
+        prompts = dataset['val'][:args.num_eval_images][args.caption_column]
+        
+        images = pipeline(prompts, num_inference_steps=30, generator=generator).images
+
+        # calculate FID
+        metrics = torch_fidelity.calculate_metrics(
+            input1=ListDataset(images),
+            input2=ListDataset(dataset['val'][:args.num_eval_images][image_column]),
+            cuda=True, 
+            isc=True, 
+            fid=True, 
+            kid=False, 
+            verbose=False)
+        
+        accelerator.log({args.leading_metric.upper(): metrics[leading_metric]}, step=global_step)
+
+        # save the generator if it improved
+        if metric_greater_cmp(metrics[leading_metric], last_best_metric):
+            print(f'Leading metric {args.leading_metric} improved from {last_best_metric} to {metrics[leading_metric]}')
+            last_best_metric = metrics[leading_metric]
+
 
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
@@ -789,6 +848,10 @@ def main():
                 break
 
         if accelerator.is_main_process:
+            if epoch % (4 * args.validation_epochs) == 0:
+                print(f'***EVALUATION AT EPOCH {epoch}***')
+                evaluation_step(global_step)
+                
             if args.validation_prompt is not None and epoch % args.validation_epochs == 0:
                 logger.info(
                     f"Running validation... \n Generating {args.num_validation_images} images with prompt:"

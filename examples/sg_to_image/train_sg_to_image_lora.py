@@ -49,7 +49,7 @@ from diffusers.utils.import_utils import is_xformers_available
 
 from simsg import SIMSGModel
 
-from utils import HFDataset, ListDataset
+from utils import ListDataset
 import torch_fidelity
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
