@@ -50,6 +50,7 @@ from diffusers.optimization import get_scheduler
 from diffusers.utils import check_min_version, is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
 
+import torch_fidelity
 
 if is_wandb_available():
     import wandb
@@ -59,7 +60,34 @@ check_min_version("0.15.0.dev0")
 
 logger = get_logger(__name__)
 
+leading_metric, last_best_metric, metric_greater_cmp = {
+        'ISC': (torch_fidelity.KEY_METRIC_ISC_MEAN, 0.0, float.__gt__),
+        'FID': (torch_fidelity.KEY_METRIC_FID, float('inf'), float.__lt__),
+        'KID': (torch_fidelity.KEY_METRIC_KID_MEAN, float('inf'), float.__lt__),
+        'PPL': (torch_fidelity.KEY_METRIC_PPL_MEAN, float('inf'), float.__lt__),
+    }['FID']
 
+class ListDataset(torch.utils.data.Dataset):
+    """
+    Turn the list of images in torch tensor type into a torch dataset
+    """
+    def __init__(self, imgs):
+        self.imgs = imgs
+    
+    def __getitem__(self, idx):
+        # if img is PIL image, convert to torch uint8 tensor
+        if isinstance(self.imgs[idx], Image.Image):
+            self.imgs[idx] = transforms.ToTensor()(self.imgs[idx])
+            # to torch.uint8
+            self.imgs[idx] = (255*self.imgs[idx]).to(torch.uint8)
+        elif isinstance(self.imgs[idx], torch.Tensor):
+            if self.imgs[idx].dtype != torch.uint8:
+                raise ValueError('Image tensor must be of type torch.uint8')
+        return self.imgs[idx]
+    
+    def __len__(self):
+        return len(self.imgs)
+    
 def log_validation(vae, text_encoder, tokenizer, unet, controlnet, args, accelerator, weight_dtype, step):
     logger.info("Running validation... ")
 
@@ -121,6 +149,18 @@ def log_validation(vae, text_encoder, tokenizer, unet, controlnet, args, acceler
             {"validation_image": validation_image, "images": images, "validation_prompt": validation_prompt}
         )
 
+    # calculate FID
+    metrics = torch_fidelity.calculate_metrics(
+    input1=ListDataset(images),
+    input2=ListDataset([Image.open(val_im).convert("RGB") for val_im in validation_images]),
+    cuda=True, 
+    isc=True, 
+    fid=True, 
+    kid=False, 
+    verbose=False)
+        
+    accelerator.log({"FID": metrics[leading_metric]}, step=step)
+
     for tracker in accelerator.trackers:
         if tracker.name == "tensorboard":
             for log in image_logs:
@@ -156,6 +196,11 @@ def log_validation(vae, text_encoder, tokenizer, unet, controlnet, args, acceler
         else:
             logger.warn(f"image logging not implemented for {tracker.name}")
 
+
+    # save the generator if it improved
+    if metric_greater_cmp(metrics[leading_metric], last_best_metric):
+        print(f'Leading metric {args.leading_metric} improved from {last_best_metric} to {metrics[leading_metric]}')
+        last_best_metric = metrics[leading_metric]
 
 def import_model_class_from_model_name_or_path(pretrained_model_name_or_path: str, revision: str):
     text_encoder_config = PretrainedConfig.from_pretrained(
@@ -967,7 +1012,7 @@ def main(args):
                     print(f'latent shape: {latents.shape}')
                     print(f'noisy latent shape: {noisy_latents.shape}')
                     print(f'encoder hidden states shape: {encoder_hidden_states.shape}')
-                    
+
                 down_block_res_samples, mid_block_res_sample = controlnet(
                     noisy_latents,
                     timesteps,
