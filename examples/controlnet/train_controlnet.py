@@ -142,7 +142,7 @@ def log_validation(vae, text_encoder, tokenizer, unet, controlnet, args, acceler
                 image = pipeline(
                     validation_prompt, validation_image, num_inference_steps=20, generator=generator
                 ).images[0]
-
+            print(f'type of image: {type(image)}')
             images.append(image)
 
         image_logs.append(
