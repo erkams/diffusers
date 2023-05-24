@@ -28,6 +28,7 @@ accelerate launch train_controlnet.py \
  --pretrained_model_name_or_path=$MODEL_DIR \
  --output_dir=$OUTPUT_DIR \
  --dataset_name=$DATASET \
+ --cache_dir="/mnt/nfs-students/cache/huggingface" \
  --caption_column="objects_str" --conditioning_image_column="colored_layout" --image_column="image" \
  --resolution=512 \
  --learning_rate=1e-5 \
