@@ -747,6 +747,7 @@ class StableDiffusionControlNetPipeline(DiffusionPipeline, TextualInversionLoade
         callback_steps: int = 1,
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
         controlnet_conditioning_scale: Union[float, List[float]] = 1.0,
+        ignore_check: bool = True,
     ):
         r"""
         Function invoked when calling the pipeline for generation.
@@ -973,6 +974,8 @@ class StableDiffusionControlNetPipeline(DiffusionPipeline, TextualInversionLoade
             self.unet.to("cpu")
             self.controlnet.to("cpu")
             torch.cuda.empty_cache()
+        
+        has_nsfw_concept = None
 
         if output_type == "latent":
             image = latents
@@ -982,7 +985,8 @@ class StableDiffusionControlNetPipeline(DiffusionPipeline, TextualInversionLoade
             image = self.decode_latents(latents)
 
             # 9. Run safety checker
-            image, has_nsfw_concept = self.run_safety_checker(image, device, prompt_embeds.dtype)
+            if not ignore_check:
+                image, has_nsfw_concept = self.run_safety_checker(image, device, prompt_embeds.dtype)
 
             # 10. Convert to PIL
             image = self.numpy_to_pil(image)
@@ -997,6 +1001,9 @@ class StableDiffusionControlNetPipeline(DiffusionPipeline, TextualInversionLoade
         if hasattr(self, "final_offload_hook") and self.final_offload_hook is not None:
             self.final_offload_hook.offload()
 
+        if ignore_check:
+            return image
+            
         if not return_dict:
             return (image, has_nsfw_concept)
 
