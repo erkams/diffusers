@@ -53,6 +53,7 @@ export OUTPUT_DIR="~/experiments/diffusion/controlnet_l2i"
 export DATASET="erkam/clevr-full-v4"
 export WANDB_API_KEY="8632f2214a3d81fe44564d0e4c4d89fe629a9bc0"
 export CACHE_DIR="~/cache/huggingface"
+export LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu/:$LD_LIBRARY_PATH"
 
 accelerate launch train_controlnet.py \
  --pretrained_model_name_or_path=$MODEL_DIR \
@@ -72,4 +73,5 @@ accelerate launch train_controlnet.py \
  --hub_token="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" --hub_model_id="erkam/controlnet-clevr-l2i" \
  --report_to="wandb" \
  --set_grads_to_none \
+ --num_train_epochs=200 \
  --tracker_project_name controlnet-clevr-layout
