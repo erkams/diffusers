@@ -56,7 +56,7 @@ if is_wandb_available():
     import wandb
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
-check_min_version("0.17.0.dev0")
+check_min_version("0.15.0.dev0")
 
 logger = get_logger(__name__)
 
@@ -101,6 +101,7 @@ def image_grid(imgs, rows, cols):
 
 
 def log_validation(vae, text_encoder, tokenizer, unet, controlnet, args, accelerator, weight_dtype, step):
+    global last_best_metric
     logger.info("Running validation... ")
 
     controlnet = accelerator.unwrap_model(controlnet)
@@ -146,6 +147,19 @@ def log_validation(vae, text_encoder, tokenizer, unet, controlnet, args, acceler
 
     for validation_prompt, validation_image in zip(validation_prompts, validation_images):
         validation_image = Image.open(validation_image).convert("RGB")
+        width, height = validation_image.size   # Get dimensions
+        if width > height:
+            
+            left = (width - height)/2
+            top = 0
+            right = (width + height)/2
+            bottom = height
+
+            # Crop the center of the image
+            validation_image = validation_image.crop((left, top, right, bottom))
+
+        newsize = (args.resolution, args.resolution)
+        validation_image = validation_image.resize(newsize)
 
         images = []
 
@@ -155,8 +169,6 @@ def log_validation(vae, text_encoder, tokenizer, unet, controlnet, args, acceler
                     validation_prompt, validation_image, num_inference_steps=20, generator=generator, output_type='pil', ignore_check=True
                 ).images[0]
 
-                print(f'type of image: {type(image)}')
-                print(f'shape of image: {image.size}')
             images.append(image)
 
         image_logs.append(
@@ -165,7 +177,7 @@ def log_validation(vae, text_encoder, tokenizer, unet, controlnet, args, acceler
 
     # calculate FID
     metrics = torch_fidelity.calculate_metrics(
-    input1=ListDataset(images),
+    input1=ListDataset(images.copy()),
     input2=ListDataset([Image.open(val_im).convert("RGB") for val_im in validation_images]),
     cuda=True, 
     isc=True, 
@@ -177,7 +189,7 @@ def log_validation(vae, text_encoder, tokenizer, unet, controlnet, args, acceler
     
     # save the generator if it improved
     if metric_greater_cmp(metrics[leading_metric], last_best_metric):
-        print(f'Leading metric {args.leading_metric} improved from {last_best_metric} to {metrics[leading_metric]}')
+        print(f'Leading metric FID improved from {last_best_metric} to {metrics[leading_metric]}')
         last_best_metric = metrics[leading_metric]
 
     for tracker in accelerator.trackers:
@@ -189,12 +201,10 @@ def log_validation(vae, text_encoder, tokenizer, unet, controlnet, args, acceler
 
                 formatted_images = []
                 np_validation_image = np.asarray(validation_image)
-                print(f'shape of np_validation_image: {np_validation_image.shape}')
                 formatted_images.append(np_validation_image)
 
                 for image in images:
                     np_image = np.asarray(image)
-                    print(f'shape of output image: {np_image.shape}')
                     formatted_images.append(np_image)
 
                 formatted_images = np.stack(formatted_images)
