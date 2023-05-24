@@ -134,7 +134,21 @@ def log_validation(vae, text_encoder, tokenizer, unet, controlnet, args, acceler
 
     for validation_prompt, validation_image in zip(validation_prompts, validation_images):
         validation_image = Image.open(validation_image).convert("RGB")
+        width, height = validation_image.size   # Get dimensions
+        if width > height:
+            
+            left = (width - height)/2
+            top = 0
+            right = (width + height)/2
+            bottom = height
 
+            # Crop the center of the image
+            validation_image = validation_image.crop((left, top, right, bottom))
+
+        newsize = (args.resolution, args.resolution)
+        validation_image = validation_image.resize(newsize)
+
+        print(f'shape of val image: {validation_image.size}')
         images = []
 
         for _ in range(args.num_validation_images):
