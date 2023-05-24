@@ -607,6 +607,7 @@ def make_train_dataset(args, tokenizer, accelerator):
     image_transforms = transforms.Compose(
         [
             transforms.Resize(args.resolution, interpolation=transforms.InterpolationMode.BILINEAR),
+            transforms.CenterCrop(args.resolution),
             transforms.ToTensor(),
             transforms.Normalize([0.5], [0.5]),
         ]
@@ -615,6 +616,7 @@ def make_train_dataset(args, tokenizer, accelerator):
     conditioning_image_transforms = transforms.Compose(
         [
             transforms.Resize(args.resolution, interpolation=transforms.InterpolationMode.BILINEAR),
+            transforms.CenterCrop(args.resolution),
             transforms.ToTensor(),
         ]
     )
@@ -958,7 +960,14 @@ def main(args):
                 encoder_hidden_states = text_encoder(batch["input_ids"])[0]
 
                 controlnet_image = batch["conditioning_pixel_values"].to(dtype=weight_dtype)
-
+                if global_step == 0:
+                    # Log the first image in the batch
+                    print(f'conditioning image shape: {controlnet_image.shape}')
+                    print(f'image shape: {batch["pixel_values"].shape}')
+                    print(f'latent shape: {latents.shape}')
+                    print(f'noisy latent shape: {noisy_latents.shape}')
+                    print(f'encoder hidden states shape: {encoder_hidden_states.shape}')
+                    
                 down_block_res_samples, mid_block_res_sample = controlnet(
                     noisy_latents,
                     timesteps,
