@@ -193,7 +193,9 @@ def log_validation(vae, text_encoder, tokenizer, unet, controlnet, args, acceler
                 formatted_images.append(np_validation_image)
 
                 for image in images:
-                    formatted_images.append(np.asarray(image))
+                    np_image = np.asarray(image)
+                    print(f'shape of output image: {np_image.shape}')
+                    formatted_images.append(np_image)
 
                 formatted_images = np.stack(formatted_images)
 
