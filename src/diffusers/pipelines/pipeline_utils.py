@@ -1346,7 +1346,7 @@ class DiffusionPipeline(ConfigMixin):
             # special case for grayscale (single channel) images
             pil_images = [Image.fromarray(image.squeeze(), mode="L") for image in images]
         else:
-            pil_images = [Image.fromarray(image) for image in images]
+            pil_images = [Image.fromarray(image, mode="RGB") for image in images]
 
         return pil_images
 
