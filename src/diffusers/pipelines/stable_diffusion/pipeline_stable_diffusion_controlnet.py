@@ -995,7 +995,8 @@ class StableDiffusionControlNetPipeline(DiffusionPipeline, TextualInversionLoade
             image = self.decode_latents(latents)
 
             # 9. Run safety checker
-            image, has_nsfw_concept = self.run_safety_checker(image, device, prompt_embeds.dtype)
+            if not ignore_check:
+                image, has_nsfw_concept = self.run_safety_checker(image, device, prompt_embeds.dtype)
 
         # Offload last model to CPU
         if hasattr(self, "final_offload_hook") and self.final_offload_hook is not None:
