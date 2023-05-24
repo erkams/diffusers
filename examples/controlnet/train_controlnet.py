@@ -936,7 +936,7 @@ def main(args):
 
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
-
+    
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
     logger.info(f"  Num batches each epoch = {len(train_dataloader)}")
@@ -947,6 +947,19 @@ def main(args):
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
     global_step = 0
     first_epoch = 0
+
+    print('Validation sanity check....')
+    log_validation(
+        vae,
+        text_encoder,
+        tokenizer,
+        unet,
+        controlnet,
+        args,
+        accelerator,
+        weight_dtype,
+        global_step
+    )
 
     # Potentially load in the weights and states from a previous save
     if args.resume_from_checkpoint:

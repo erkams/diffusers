@@ -18,6 +18,8 @@ export WANDB_API_KEY="8632f2214a3d81fe44564d0e4c4d89fe629a9bc0"
 
 wandb login 8632f2214a3d81fe44564d0e4c4d89fe629a9bc0
 
+ln -s /usr/lib/wsl/lib/libcuda.so [path to your env here]/lib/libcuda.so
+
 cd examples/controlnet
 pip install -r requirements.txt
 pip install matplotlib bitsandbytes scipy
