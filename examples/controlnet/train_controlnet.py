@@ -145,6 +145,7 @@ def log_validation(vae, text_encoder, tokenizer, unet, controlnet, args, acceler
 
     image_logs = []
 
+    val_imgs = []
     for validation_prompt, validation_image in zip(validation_prompts, validation_images):
         validation_image = Image.open(validation_image).convert("RGB")
         width, height = validation_image.size   # Get dimensions
@@ -160,7 +161,7 @@ def log_validation(vae, text_encoder, tokenizer, unet, controlnet, args, acceler
 
         newsize = (args.resolution, args.resolution)
         validation_image = validation_image.resize(newsize)
-
+        val_imgs.append(validation_image)
         images = []
 
         for _ in range(args.num_validation_images):
@@ -178,7 +179,7 @@ def log_validation(vae, text_encoder, tokenizer, unet, controlnet, args, acceler
     # calculate FID
     metrics = torch_fidelity.calculate_metrics(
     input1=ListDataset(images.copy()),
-    input2=ListDataset([Image.open(val_im).convert("RGB") for val_im in validation_images]),
+    input2=ListDataset(val_imgs.copy()),
     cuda=True, 
     isc=True, 
     fid=True, 
