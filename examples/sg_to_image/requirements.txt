@@ -1,0 +1,11 @@
+wandb==0.13.9
+accelerate==0.18.0
+torchvision
+transformers>=4.25.1
+ftfy
+tensorboard
+datasets
+torch_fidelity
+matplotlib
+bitsandbytes
+scipy
