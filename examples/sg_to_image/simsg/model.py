@@ -24,18 +24,14 @@ from simsg.decoder import DecoderNetwork
 from simsg.layout import boxes_to_layout, masks_to_layout
 from simsg.layers import build_mlp
 
-import random
 import torchvision as T
 
-import cv2
 from simsg.data import imagenet_deprocess_batch
-
-from sklearn.decomposition import PCA
 
 import torch.distributions as tdist
 from simsg.feats_statistics import get_mean, get_std
 
-from transformers import CLIPTextModel, CLIPTokenizer, DPTFeatureExtractor
+from transformers import CLIPTextModel, CLIPTokenizer
 
 CLIP_MODEL_PATH = 'stabilityai/stable-diffusion-2'
 
