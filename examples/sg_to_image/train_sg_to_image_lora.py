@@ -106,7 +106,6 @@ def parse_args():
         "--sg_model_path",
         type=str,
         default='/mnt/simsg/clevr_models/checkpoint.pt',
-        required=True,
         help="Path to pretrained SG model",
     )
     parser.add_argument(
