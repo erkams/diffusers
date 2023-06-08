@@ -626,7 +626,7 @@ def main():
 
     if args.train_sg:
         optimizer = optimizer_cls(
-            [lora_layers.parameters(), filter(lambda p: p.requires_grad, sg_net.parameters())],
+            [*lora_layers.parameters(), *filter(lambda p: p.requires_grad, sg_net.parameters())],
             lr=args.learning_rate,
             betas=(args.adam_beta1, args.adam_beta2),
             weight_decay=args.adam_weight_decay,
