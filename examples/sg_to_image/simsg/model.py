@@ -45,7 +45,7 @@ class SIMSGModel(nn.Module):
     a manipulated image that satisfies the scene graph constellations
     """
     def __init__(self, vocab, image_size=(64, 64), embedding_dim=1024,
-                 gconv_dim=128, gconv_hidden_dim=512,
+                 gconv_dim=1024, gconv_hidden_dim=512,
                  gconv_pooling='avg', gconv_num_layers=5,
                  decoder_dims=(1024, 512, 256, 128, 64),
                  normalization='batch', activation='leakyrelu-0.2',
@@ -200,14 +200,17 @@ class SIMSGModel(nn.Module):
         layers.append(nn.Conv2d(dim, output_dim, kernel_size=1))
         return nn.Sequential(*layers)
 
-    def enable_embedding(self, text_encoder=None, tokenizer=None):
+    def enable_embedding(self, text_encoder=None, tokenizer=None, train=False):
         if text_encoder is not None:
             del self.text_encoder
             self.text_encoder = text_encoder
         if tokenizer is not None:
             del self.tokenizer
             self.tokenizer = tokenizer
-        self.eval()
+        if train:
+            self.train()
+        else:
+            self.eval()
         # delete all layers after gcn_net
         del self.decoder_net
         del self.box_net
@@ -233,9 +236,12 @@ class SIMSGModel(nn.Module):
 
         # convert objects to torch tensor
         objs = torch.tensor(objects, dtype=torch.long, device=triples.device)
-
+        # print(f'objs shape: {objs.shape}')
+        # print(f'pred shape: {p.shape}')
         obj_names = [self.vocab['object_idx_to_name'][i] for i in objs.cpu().numpy()]
         p_names = [self.vocab['pred_idx_to_name'][i] for i in p.cpu().numpy()]
+        # print(f'obj names: {len(obj_names)}')
+        # print(f'p_names shape: {len(p_names)}')
         
         # s_names = [self.vocab['object_idx_to_name'][i] for i in s.cpu().numpy()]
         # o_names = [self.vocab['object_idx_to_name'][i] for i in o.cpu().numpy()]
@@ -257,8 +263,8 @@ class SIMSGModel(nn.Module):
             # output shape: (num_objs, 10, 1024)
             vecs = self.text_encoder(tokens)[0]
 
-            # merge last two dimensions with view, output shape: (num_objs, 10240)
-            vecs = vecs.view(vecs.size(0), -1)
+            # take average of the tokens to get a overall 1-dim embedding for each objects (num_objs, 1024)
+            vecs = vecs.mean(axis=-2)
 
             return vecs
         
@@ -289,7 +295,9 @@ class SIMSGModel(nn.Module):
             obj_vecs = self.layer_norm(obj_vecs)
 
         pred_vecs = embed_text(p_names)
-
+        # print(obj_vecs.shape)
+        # print(pred_vecs.shape)
+        
         # GCN pass
         if isinstance(self.gconv, nn.Linear):
             obj_vecs = self.gconv(obj_vecs)
@@ -313,7 +321,7 @@ class SIMSGModel(nn.Module):
 
     def forward(self, objs, triples, obj_to_img=None, boxes_gt=None, masks_gt=None, src_image=None, imgs_src=None,
                 keep_box_idx=None, keep_feat_idx=None, keep_image_idx=None, combine_gt_pred_box_idx=None,
-                query_feats=None, mode='train', t=0, query_idx=0, random_feats=False, get_layout_boxes=False, get_conv_feats=False):
+                query_feats=None, mode='train', t=0, query_idx=0, random_feats=False, get_layout_boxes=False, get_conv_feats=False, return_layout=False, switch_to_box_pred=False):
         """
         Required Inputs:
         - objs: LongTensor of shape (num_objs,) giving categories for all objects
@@ -345,12 +353,17 @@ class SIMSGModel(nn.Module):
 
         in_image = src_image.clone()
         num_objs = objs.size(0)
+        # print(f'objs shape: {objs.shape}')
+        # print(f'triples shape: {triples.shape}')
+        # print(f'obj to img: {obj_to_img}')
+
         obj_names = [self.vocab['object_idx_to_name'][i] for i in objs.cpu().numpy()]
         s, p, o = triples.chunk(3, dim=1)  # All have shape (num_triples, 1)
         s, p, o = [x.squeeze(1) for x in [s, p, o]]  # Now have shape (num_triples,)
         edges = torch.stack([s, o], dim=1)  # Shape is (num_triples, 2)
         p_names = [self.vocab['pred_idx_to_name'][i] for i in p.cpu().numpy()]
 
+        # print(f'pred shape: {p.shape}')
         # output shape: (num_objs, 10)
         obj_tokens = self.tokenizer(
             obj_names, max_length=10, padding="max_length", truncation=True, return_tensors="pt"
@@ -359,8 +372,8 @@ class SIMSGModel(nn.Module):
         # output shape: (num_objs, 10, 1024)
         obj_vecs = self.text_encoder(obj_tokens)[0]
 
-        # merge last two dimensions with view, output shape: (num_objs, 10240)
-        obj_vecs = obj_vecs.view(obj_vecs.size(0), -1)
+        # taking average over token axis to get a overall 1dim vector per object (num_objs, 1024)
+        obj_vecs = obj_vecs.mean(axis=-2)
 
         if obj_to_img is None:
             obj_to_img = torch.zeros(num_objs, dtype=objs.dtype, device=objs.device)
@@ -402,14 +415,19 @@ class SIMSGModel(nn.Module):
                 obj_vecs = torch.cat([obj_vecs, boxes_prior], dim=1)
             obj_vecs = self.layer_norm(obj_vecs)
 
+        # (num_pred, 10)
         pred_tokens = self.tokenizer(
             p_names, max_length=10, padding="max_length", truncation=True, return_tensors="pt"
         ).input_ids.to('cuda:0')
 
         pred_vecs = self.text_encoder(pred_tokens)[0]
-        # merge last two dimensions with view
-        pred_vecs = pred_vecs.view(pred_vecs.size(0), -1)
+        # average over the number of token (num_pred, 10, 1024) -> (num_pred, 1024)
+        pred_vecs = pred_vecs.mean(axis=-2)
+
+        # pred_vecs = pred_vecs.view(pred_vecs.size(0), -1)
         # pred_vecs = self.pred_embeddings(p)
+        # print(f'obj shape: {obj_vecs.shape}')
+        # print(f'pred shape: {pred_vecs.shape}')
 
         # GCN pass
         if isinstance(self.gconv, nn.Linear):
@@ -432,13 +450,13 @@ class SIMSGModel(nn.Module):
             obj_vecs = torch.cat([obj_vecs, feats_prior], 1)
             obj_vecs = self.layer_norm2(obj_vecs)
 
-        use_predboxes = False
+        use_predboxes = switch_to_box_pred
 
         H, W = self.image_size
 
         if self.is_baseline or self.is_supervised:
 
-            layout_boxes = boxes_pred if boxes_gt is None else boxes_gt
+            layout_boxes = boxes_pred if (boxes_gt is None or use_predboxes is True) else boxes_gt
             box_ones = torch.ones([num_objs, 1], dtype=boxes_gt.dtype, device=boxes_gt.device)
 
             box_keep = self.prepare_keep_idx(evaluating, box_ones, in_image.size(0), obj_to_img, keep_box_idx,
@@ -450,7 +468,8 @@ class SIMSGModel(nn.Module):
 
             for box_id in range(keep_image_idx.size(0)):
                 if keep_image_idx[box_id] == 0:
-                    in_image = mask_image_in_bbox(in_image, boxes_gt, box_id, obj_to_img)
+                    boxes = boxes_pred if (boxes_gt is None or use_predboxes is True) else boxes_gt
+                    in_image = mask_image_in_bbox(in_image, boxes, box_id, obj_to_img)
             generated = None
 
         else:
@@ -491,7 +510,10 @@ class SIMSGModel(nn.Module):
             layout_masks = masks_pred if masks_gt is None else masks_gt
             layout = masks_to_layout(obj_vecs, layout_boxes, layout_masks,
                                      obj_to_img, H, W, pooling=self.layout_pooling)#, front_idx=1-keep_box_idx)
-
+        
+        if return_layout:
+            return layout
+        
         noise_occluding = True
 
         if self.image_feats_branch:

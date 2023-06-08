@@ -22,6 +22,7 @@ import random
 from pathlib import Path
 from typing import Optional
 import itertools
+import json
 
 import datasets
 import numpy as np
@@ -46,8 +47,6 @@ from diffusers.models.attention_processor import LoRAAttnProcessor
 from diffusers.optimization import get_scheduler
 from diffusers.utils import check_min_version, is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
-
-from simsg import SIMSGModel
 
 from utils import ListDataset
 import torch_fidelity
@@ -315,6 +314,13 @@ def parse_args():
             "Number of subprocesses to use for data loading. 0 means that the data will be loaded in the main process."
         ),
     )
+
+    parser.add_argument(
+        "--train_sg", action="store_true", help="Whether or not to train scene graph embedding network."
+    )
+    parser.add_argument("--vocab_json", type=str, default="mnt/students/vocab.json", help="The path to the vocab file.")
+
+
     parser.add_argument("--adam_beta1", type=float, default=0.9, help="The beta1 parameter for the Adam optimizer.")
     parser.add_argument("--adam_beta2", type=float, default=0.999, help="The beta2 parameter for the Adam optimizer.")
     parser.add_argument("--adam_weight_decay", type=float, default=1e-2, help="Weight decay to use.")
@@ -482,13 +488,37 @@ def main():
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
     )
 
-    # initializing the SG Model with the pretrained model
-    checkpoint = torch.load(args.sg_model_path)
-    sg_net = SIMSGModel(**checkpoint['model_kwargs'])
-    sg_net.load_state_dict(checkpoint['model_state'])
-    sg_net.enable_embedding(text_encoder=text_encoder, tokenizer=tokenizer)
-    sg_net.image_size = 64
-    sg_net.requires_grad_(False)
+    if args.train_sg:
+        from simsg import SGModel
+        
+        with open(args.vocab_json, 'r') as f:
+            vocab = json.load(f)
+        
+        kwargs = {
+            'vocab': vocab,
+            'embedding_dim': 1024,
+            'gconv_dim': 1024,
+            'gconv_hidden_dim': 512,
+            'gconv_num_layers': 5,
+            'feats_in_gcn': False,
+            'feats_out_gcn': True,
+            'is_baseline': False,
+            'is_supervised': True,
+            'tokenizer': tokenizer,
+            'text_encoder': text_encoder
+        }
+        sg_net = SGModel(**kwargs)
+        sg_net.train()
+
+    else:
+        from simsg import SIMSGModel
+        # initializing the SG Model with the pretrained model
+        checkpoint = torch.load(args.sg_model_path)
+        sg_net = SIMSGModel(**checkpoint['model_kwargs'])
+        sg_net.load_state_dict(checkpoint['model_state'])
+        sg_net.enable_embedding(text_encoder=text_encoder, tokenizer=tokenizer)
+        sg_net.image_size = 64
+        sg_net.requires_grad_(False)
 
 
     # freeze parameters of models to save more memory
@@ -595,13 +625,22 @@ def main():
     else:
         optimizer_cls = torch.optim.AdamW
 
-    optimizer = optimizer_cls(
-        lora_layers.parameters(),
-        lr=args.learning_rate,
-        betas=(args.adam_beta1, args.adam_beta2),
-        weight_decay=args.adam_weight_decay,
-        eps=args.adam_epsilon,
-    )
+    if args.train_sg:
+        optimizer = optimizer_cls(
+            [lora_layers.parameters(), filter(lambda p: p.requires_grad, sg_net.parameters())],
+            lr=args.learning_rate,
+            betas=(args.adam_beta1, args.adam_beta2),
+            weight_decay=args.adam_weight_decay,
+            eps=args.adam_epsilon,
+        )
+    else:
+        optimizer = optimizer_cls(
+            lora_layers.parameters(),
+            lr=args.learning_rate,
+            betas=(args.adam_beta1, args.adam_beta2),
+            weight_decay=args.adam_weight_decay,
+            eps=args.adam_epsilon,
+        )
 
     # Get the datasets: you can either provide your own training and evaluation files (see below)
     # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
@@ -674,7 +713,11 @@ def main():
         for triplets, boxes, objects in zip(examples[triplets_column], examples[boxes_column], examples[objects_column]):
             if is_train:
                 random.shuffle(triplets)
-            embed = sg_net.encode_sg(triplets, objects, boxes, max_length=max_length, batch_size=args.train_batch_size)
+            if args.train_sg:
+                embed = sg_net(triplets, objects, boxes, max_length=max_length, batch_size=args.train_batch_size)
+            else:
+                embed = sg_net.encode_sg(triplets, objects, boxes, max_length=max_length, batch_size=args.train_batch_size)
+
             sg_embeds.append(embed)
 
         sg_embed = torch.stack(sg_embeds, dim=0)
