@@ -208,6 +208,10 @@ class SGModel(nn.Module):
         # print(pred_vecs.shape)
         
         # GCN pass
+        print(f'obj_vecs shape: {obj_vecs.shape}')
+        print(f'pred_vecs shape: {pred_vecs.shape}')
+        print(f'edges shape: {edges.shape}')
+        
         if isinstance(self.gconv, nn.Linear):
             obj_vecs = self.gconv(obj_vecs)
         else:
