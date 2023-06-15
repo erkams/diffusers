@@ -730,9 +730,9 @@ def main():
 
         elif args.cond_place == 'attn':
             out_shape = (1, sum(max_length), 1024)
-            zeros = torch.zeros_like(sg_embed)
-            pad = torch.cat([zeros] * 3, dim=-1) # hardcoded for 3 now = out_shape[2]//sg_embed.shape[2] - 1
-            sg_embed = torch.cat([sg_embed, pad], dim=-1)
+            # zeros = torch.zeros_like(sg_embed)
+            # pad = torch.cat([zeros] * 3, dim=-1) # hardcoded for 3 now = out_shape[2]//sg_embed.shape[2] - 1
+            # sg_embed = torch.cat([sg_embed, pad], dim=-1)
             # sg_embed = sg_embed.repeat(1, 1, out_shape[2]//sg_embed.shape[2])
 
         return sg_embed
@@ -864,7 +864,8 @@ def main():
     def handle_hidden_states(input_ids=None, condition=None):
         if args.caption_type != 'none':
             encoder_hidden_states = text_encoder(input_ids)[0]
-
+            # print(f'encoder_hidden_states shape: {encoder_hidden_states.shape}')
+            # print(f'condition shape: {encoder_hidden_states.shape}')
         if args.cond_place == 'attn':
             if args.caption_type != 'none':
                 prompt_embeds = torch.cat((encoder_hidden_states, condition), dim=1)

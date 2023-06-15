@@ -178,7 +178,7 @@ class SGModel(nn.Module):
             return vecs
         
         obj_vecs = embed_text(obj_names)
-        
+        # print(f'obj_vecs shape: {obj_vecs.shape}')
         if obj_to_img is None:
             obj_to_img = torch.zeros(num_objs, dtype=objs.dtype, device=objs.device)
 
@@ -208,9 +208,6 @@ class SGModel(nn.Module):
         # print(pred_vecs.shape)
         
         # GCN pass
-        print(f'obj_vecs shape: {obj_vecs.shape}')
-        print(f'pred_vecs shape: {pred_vecs.shape}')
-        print(f'edges shape: {edges.shape}')
         
         if isinstance(self.gconv, nn.Linear):
             obj_vecs = self.gconv(obj_vecs)
