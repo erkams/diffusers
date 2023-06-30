@@ -317,6 +317,9 @@ def parse_args():
     parser.add_argument(
         "--train_sg", action="store_true", help="Whether or not to train scene graph embedding network."
     )
+    parser.add_argument(
+        "--start_lora", type=int, default=500, help="Number of steps after to start the lora training."
+    )
     parser.add_argument("--vocab_json", type=str, default="mnt/students/vocab.json", help="The path to the vocab file.")
 
 
@@ -569,48 +572,6 @@ def main():
     # - up blocks (2x attention layers) * (3x transformer layers) * (3x down blocks) = 18
     # => 32 layers
 
-    # Set correct lora layers
-    lora_attn_procs = {}
-    for name in unet.attn_processors.keys():
-        cross_attention_dim = None if name.endswith("attn1.processor") else unet.config.cross_attention_dim
-        if name.startswith("mid_block"):
-            hidden_size = unet.config.block_out_channels[-1]
-        elif name.startswith("up_blocks"):
-            block_id = int(name[len("up_blocks.")])
-            hidden_size = list(reversed(unet.config.block_out_channels))[block_id]
-        elif name.startswith("down_blocks"):
-            block_id = int(name[len("down_blocks.")])
-            hidden_size = unet.config.block_out_channels[block_id]
-
-        lora_attn_procs[name] = LoRAAttnProcessor(hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, rank=args.lora_rank)
-
-    unet.set_attn_processor(lora_attn_procs)
-
-    if args.enable_xformers_memory_efficient_attention:
-        if is_xformers_available():
-            import xformers
-
-            xformers_version = version.parse(xformers.__version__)
-            if xformers_version == version.parse("0.0.16"):
-                logger.warn(
-                    "xFormers 0.0.16 cannot be used for training in some GPUs. If you observe problems during training, please update xFormers to at least 0.0.17. See https://huggingface.co/docs/diffusers/main/en/optimization/xformers for more details."
-                )
-            unet.enable_xformers_memory_efficient_attention()
-        else:
-            raise ValueError("xformers is not available. Make sure it is installed correctly")
-
-    lora_layers = AttnProcsLayers(unet.attn_processors)
-
-    # Enable TF32 for faster training on Ampere GPUs,
-    # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
-    if args.allow_tf32:
-        torch.backends.cuda.matmul.allow_tf32 = True
-
-    if args.scale_lr:
-        args.learning_rate = (
-            args.learning_rate * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
-        )
-
     # Initialize the optimizer
     if args.use_8bit_adam:
         try:
@@ -624,15 +585,39 @@ def main():
     else:
         optimizer_cls = torch.optim.AdamW
 
-    if args.train_sg:
-        optimizer = optimizer_cls(
-            [*lora_layers.parameters(), *filter(lambda p: p.requires_grad, sg_net.parameters())],
-            lr=args.learning_rate,
-            betas=(args.adam_beta1, args.adam_beta2),
-            weight_decay=args.adam_weight_decay,
-            eps=args.adam_epsilon,
-        )
-    else:
+    # Set correct lora layers
+    def set_lora_layers():
+        lora_attn_procs = {}
+        for name in unet.attn_processors.keys():
+            cross_attention_dim = None if name.endswith("attn1.processor") else unet.config.cross_attention_dim
+            if name.startswith("mid_block"):
+                hidden_size = unet.config.block_out_channels[-1]
+            elif name.startswith("up_blocks"):
+                block_id = int(name[len("up_blocks.")])
+                hidden_size = list(reversed(unet.config.block_out_channels))[block_id]
+            elif name.startswith("down_blocks"):
+                block_id = int(name[len("down_blocks.")])
+                hidden_size = unet.config.block_out_channels[block_id]
+
+            lora_attn_procs[name] = LoRAAttnProcessor(hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, rank=args.lora_rank)
+
+        unet.set_attn_processor(lora_attn_procs)
+
+        if args.enable_xformers_memory_efficient_attention:
+            if is_xformers_available():
+                import xformers
+
+                xformers_version = version.parse(xformers.__version__)
+                if xformers_version == version.parse("0.0.16"):
+                    logger.warn(
+                        "xFormers 0.0.16 cannot be used for training in some GPUs. If you observe problems during training, please update xFormers to at least 0.0.17. See https://huggingface.co/docs/diffusers/main/en/optimization/xformers for more details."
+                    )
+                unet.enable_xformers_memory_efficient_attention()
+            else:
+                raise ValueError("xformers is not available. Make sure it is installed correctly")
+
+        lora_layers = AttnProcsLayers(unet.attn_processors)
+
         optimizer = optimizer_cls(
             lora_layers.parameters(),
             lr=args.learning_rate,
@@ -640,6 +625,52 @@ def main():
             weight_decay=args.adam_weight_decay,
             eps=args.adam_epsilon,
         )
+
+        lr_scheduler = get_scheduler(
+            args.lr_scheduler,
+            optimizer=optimizer,
+            num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
+            num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
+        )
+
+        return lora_layers, optimizer, lr_scheduler
+
+    # Enable TF32 for faster training on Ampere GPUs,
+    # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
+    if args.allow_tf32:
+        torch.backends.cuda.matmul.allow_tf32 = True
+
+    if args.scale_lr:
+        args.learning_rate = (
+            args.learning_rate * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
+        )
+
+
+    if args.train_sg:
+        # optimizer = optimizer_cls(
+        #     lora_layers.parameters(),
+        #     lr=args.learning_rate,
+        #     betas=(args.adam_beta1, args.adam_beta2),
+        #     weight_decay=args.adam_weight_decay,
+        #     eps=args.adam_epsilon,
+        # )
+
+        optimizer_sg = optimizer_cls(
+            [*filter(lambda p: p.requires_grad, sg_net.parameters())],
+            lr=args.learning_rate,
+            betas=(args.adam_beta1, args.adam_beta2),
+            weight_decay=args.adam_weight_decay,
+            eps=args.adam_epsilon,
+        )
+    else:
+        args.start_lora = 0
+        # optimizer = optimizer_cls(
+        #     lora_layers.parameters(),
+        #     lr=args.learning_rate,
+        #     betas=(args.adam_beta1, args.adam_beta2),
+        #     weight_decay=args.adam_weight_decay,
+        #     eps=args.adam_epsilon,
+        # )
 
     # Get the datasets: you can either provide your own training and evaluation files (see below)
     # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
@@ -834,16 +865,16 @@ def main():
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
 
-    lr_scheduler = get_scheduler(
+    lr_scheduler_sg = get_scheduler(
         args.lr_scheduler,
-        optimizer=optimizer,
+        optimizer=optimizer_sg,
         num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
         num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
     )
 
     # Prepare everything with our `accelerator`.
-    lora_layers, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-        lora_layers, optimizer, train_dataloader, lr_scheduler
+    optimizer_sg, train_dataloader, lr_scheduler_sg = accelerator.prepare(
+        optimizer_sg, train_dataloader, lr_scheduler_sg
     )
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
@@ -993,6 +1024,7 @@ def main():
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
     global_step = 0
     first_epoch = 0
+    train_lora = False
     images = []
 
     # Potentially load in the weights and states from a previous save
@@ -1025,7 +1057,7 @@ def main():
     progress_bar.set_description("Steps")
     
     for epoch in range(first_epoch, args.num_train_epochs):
-        unet.train()
+        
         train_loss = 0.0
         for step, batch in enumerate(train_dataloader):
             # Skip steps until we reach the resumed step
@@ -1056,9 +1088,9 @@ def main():
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
-                if step == 0:
+                if global_step == 0:
                     print(f'sg embed shape: {batch["sg_embeds"].shape}')
-                    print(f'STEP: {step}')
+                    print(f'STEP: {global_step}')
                 # if step > 40:
                 #     print(f'PROMPT: {batch["prompt"]}')
                 #     print(f'TRIPLETS: {batch["triplets"]}')
@@ -1085,12 +1117,17 @@ def main():
 
                 # Backpropagate
                 accelerator.backward(loss)
-                if accelerator.sync_gradients:
-                    params_to_clip = lora_layers.parameters()
-                    accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
-                optimizer.step()
-                lr_scheduler.step()
-                optimizer.zero_grad()
+                if train_lora:
+                    if accelerator.sync_gradients:
+                        params_to_clip = lora_layers.parameters()
+                        accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
+                    optimizer_lora.step()
+                    lr_scheduler_lora.step()
+                    optimizer_lora.zero_grad()
+                
+                optimizer_sg.step()
+                lr_scheduler_sg.step()
+                optimizer_sg.zero_grad()
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
@@ -1105,11 +1142,21 @@ def main():
                         accelerator.save_state(save_path)
                         logger.info(f"Saved state to {save_path}")
 
-            logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
+            logs = {"step_loss": loss.detach().item(), "lr_sg": lr_scheduler_sg.get_last_lr()[0]}
+            if global_step >= args.start_lora:
+                logs["lr_lora"] = lr_scheduler_lora.get_last_lr()[0]
             progress_bar.set_postfix(**logs)
+
+            if not train_lora and global_step +1 == args.start_lora:
+                train_lora = True
+                unet.train()
+                print('starting lora training')
+                lora_layers, optimizer_lora, lr_scheduler_lora = set_lora_layers()
+                lora_layers, optimizer_lora, lr_scheduler_lora = accelerator.prepare(lora_layers, optimizer_lora, lr_scheduler_lora)
 
             if global_step >= args.max_train_steps:
                 break
+
 
         if accelerator.is_main_process:
             if epoch % (4 * args.validation_epochs) == 0:
