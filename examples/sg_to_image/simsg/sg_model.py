@@ -126,7 +126,7 @@ class SGModel(nn.Module):
         else:
             self.eval()
 
-    def forward(self, triples, objects=None, boxes_gt=None, max_length=(12, 66), batch_size=1):
+    def forward(self, triples, objects=None, boxes_gt=None, max_length=(12, 66), batch_size=1, return_preds=False):
         """
         Encode a scene graph into a vector representation.
 
@@ -217,17 +217,20 @@ class SGModel(nn.Module):
             obj_vecs, pred_vecs = self.gconv_net(obj_vecs, pred_vecs, edges)
 
         obj_vecs = F.pad(obj_vecs, pad=(0, 0, max_length[0] - obj_vecs.size(0), 0))
-        pred_vecs = F.pad(pred_vecs, pad=(0, 0, max_length[1] - pred_vecs.size(0), 0))
 
-        # concat vectors
-        sg_embed = torch.cat([obj_vecs, pred_vecs], dim=0)
+        if return_preds:
+            pred_vecs = F.pad(pred_vecs, pad=(0, 0, max_length[1] - pred_vecs.size(0), 0))
+
+            # concat vectors
+            sg_embed = torch.cat([obj_vecs, pred_vecs], dim=0)
         
+            return sg_embed
         # # resize vector with interpolation
         # sg_embed = F.interpolate(sg_embed.unsqueeze(0), size=(out_shape[-2], out_shape[-1]), mode='bilinear', align_corners=False)
         # sg_embed = sg_embed.squeeze(0)
         # sg_embed = torch.cat([sg_embed] * out_shape[1], dim=0)
         
-        return sg_embed 
+        return obj_vecs 
 
     def prepare_keep_idx(self, evaluating, box_ones, num_images, obj_to_img, keep_box_idx,
                          keep_feat_idx, with_feats=True):

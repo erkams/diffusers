@@ -29,16 +29,17 @@ accelerate launch --mixed_precision="fp16" train_sg_to_image_lora.py \
 --train_sg --vocab_json="/mnt/students/vocab.json" \
 --caption_type="objects" --lora_rank=4 --center_crop --leading_metric='FID'
 
+export MODEL_DIR="stabilityai/stable-diffusion-2"
 
-accelerate launch --mixed_precision="fp16" train_sg_to_image_lora.py \
+accelerate launch --mixed_precision="no" train_sg_to_image_lora.py \
 --pretrained_model_name_or_path=$MODEL_DIR \
 --dataset_name=$DATASET --caption_column="objects_str" --image_column="image" \
 --boxes_column="boxes" --objects_column="objects" --triplets_column="triplets" \
 --resolution=512 --train_batch_size=1 --gradient_accumulation_steps=4 \
 --num_train_epochs=100 --checkpointing_steps=5000 --learning_rate=1e-04 \
---lr_scheduler="constant_with_warmup" --lr_warmup_steps=1000 --seed=42 \
+--lr_scheduler="constant_with_warmup" --lr_warmup_steps=3000 --seed=42 \
 --output_dir="sd-clevr-sg2im-objects_cap-e2e" --cond_place="attn" \
 --num_validation_images=4 --report_to="wandb" \
 --push_to_hub --shuffle_triplets \
---train_sg --vocab_json="/home/erkam/simsg/simsg/data/clevr_gen/MyClevr/target/vocab.json" \
+--train_sg --start_lora=1 --max_train_steps=50000 --vocab_json="/home/erkam/simsg/simsg/data/clevr_gen/MyClevr/target/vocab.json" \
 --caption_type="objects" --lora_rank=4 --center_crop --leading_metric='FID'
