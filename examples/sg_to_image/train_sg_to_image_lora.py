@@ -271,7 +271,13 @@ def parse_args():
         help="Whether or not to use gradient checkpointing to save memory at the expense of slower backward pass.",
     )
     parser.add_argument(
-        "--learning_rate",
+        "--learning_rate_sg",
+        type=float,
+        default=1e-4,
+        help="Initial learning rate (after the potential warmup period) to use.",
+    )
+    parser.add_argument(
+        "--learning_rate_lora",
         type=float,
         default=1e-4,
         help="Initial learning rate (after the potential warmup period) to use.",
@@ -283,7 +289,16 @@ def parse_args():
         help="Scale the learning rate by the number of GPUs, gradient accumulation steps, and batch size.",
     )
     parser.add_argument(
-        "--lr_scheduler",
+        "--lr_scheduler_sg",
+        type=str,
+        default="constant",
+        help=(
+            'The scheduler type to use. Choose between ["linear", "cosine", "cosine_with_restarts", "polynomial",'
+            ' "constant", "constant_with_warmup"]'
+        ),
+    )
+    parser.add_argument(
+        "--lr_scheduler_lora",
         type=str,
         default="constant",
         help=(
@@ -620,14 +635,14 @@ def main():
 
         optimizer = optimizer_cls(
             lora_layers.parameters(),
-            lr=args.learning_rate,
+            lr=args.learning_rate_lora,
             betas=(args.adam_beta1, args.adam_beta2),
             weight_decay=args.adam_weight_decay,
             eps=args.adam_epsilon,
         )
 
         lr_scheduler = get_scheduler(
-            args.lr_scheduler,
+            args.lr_scheduler_lora,
             optimizer=optimizer,
             num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
             num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
@@ -641,8 +656,12 @@ def main():
         torch.backends.cuda.matmul.allow_tf32 = True
 
     if args.scale_lr:
-        args.learning_rate = (
-            args.learning_rate * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
+        args.learning_rate_lora = (
+            args.learning_rate_lora * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
+        )
+
+        args.learning_rate_sg = (
+            args.learning_rate_sg * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
         )
 
 
@@ -657,7 +676,7 @@ def main():
 
         optimizer_sg = optimizer_cls(
             [*filter(lambda p: p.requires_grad, sg_net.parameters())],
-            lr=args.learning_rate,
+            lr=args.learning_rate_sg,
             betas=(args.adam_beta1, args.adam_beta2),
             weight_decay=args.adam_weight_decay,
             eps=args.adam_epsilon,
@@ -866,7 +885,7 @@ def main():
         overrode_max_train_steps = True
 
     lr_scheduler_sg = get_scheduler(
-        args.lr_scheduler,
+        args.lr_scheduler_sg,
         optimizer=optimizer_sg,
         num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
         num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
@@ -1143,11 +1162,12 @@ def main():
                         logger.info(f"Saved state to {save_path}")
 
             logs = {"step_loss": loss.detach().item(), "lr_sg": lr_scheduler_sg.get_last_lr()[0]}
-            if global_step >= args.start_lora:
+            if train_lora:
                 logs["lr_lora"] = lr_scheduler_lora.get_last_lr()[0]
             progress_bar.set_postfix(**logs)
+            accelerator.log(logs, step=global_step)
 
-            if not train_lora and global_step +1 == args.start_lora:
+            if not train_lora and global_step +1 >= args.start_lora:
                 train_lora = True
                 unet.train()
                 print('starting lora training')
