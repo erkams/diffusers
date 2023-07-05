@@ -35,7 +35,7 @@ class SGModel(nn.Module):
                  gconv_pooling='avg', gconv_num_layers=5, mlp_normalization='none',
                  feat_dims=128, is_baseline=False, is_supervised=False,
                  feats_in_gcn=False, feats_out_gcn=True, 
-                 text_encoder=None, tokenizer=None, **kwargs):
+                 text_encoder=None, tokenizer=None, identity=False, **kwargs):
 
         super(SGModel, self).__init__()
 
@@ -48,7 +48,7 @@ class SGModel(nn.Module):
         self.feats_out_gcn = feats_out_gcn
         self.is_baseline = is_baseline
         self.is_supervised = is_supervised
-
+        self.identity = identity
         # num_objs = len(vocab['object_idx_to_name'])
         # num_preds = len(vocab['pred_idx_to_name'])
         if tokenizer is None:
@@ -177,7 +177,7 @@ class SGModel(nn.Module):
 
             return vecs
         
-        obj_vecs = embed_text(obj_names)
+        obj_vecs_ = embed_text(obj_names)
         # print(f'obj_vecs shape: {obj_vecs.shape}')
         if obj_to_img is None:
             obj_to_img = torch.zeros(num_objs, dtype=objs.dtype, device=objs.device)
@@ -200,8 +200,8 @@ class SGModel(nn.Module):
             # if query_feats is not None:
             #     feats_prior[query_idx] = query_feats
 
-            obj_vecs = torch.cat([obj_vecs, boxes_prior], dim=1)
-            obj_vecs = self.layer_norm(obj_vecs)
+            obj_vecs_ = torch.cat([obj_vecs_, boxes_prior], dim=1)
+            obj_vecs_ = self.layer_norm(obj_vecs_)
 
         pred_vecs = embed_text(p_names)
         # print(obj_vecs.shape)
@@ -210,25 +210,30 @@ class SGModel(nn.Module):
         # GCN pass
         
         if isinstance(self.gconv, nn.Linear):
-            obj_vecs = self.gconv(obj_vecs)
+            obj_vecs = self.gconv(obj_vecs_)
         else:
-            obj_vecs, pred_vecs = self.gconv(obj_vecs, pred_vecs, edges)
+            obj_vecs, pred_vecs = self.gconv(obj_vecs_, pred_vecs, edges)
         if self.gconv_net is not None:
-            obj_vecs, pred_vecs = self.gconv_net(obj_vecs, pred_vecs, edges)
+            obj_vecs, pred_vecs = self.gconv_net(obj_vecs_, pred_vecs, edges)
 
+        if self.identity:
+            obj_vecs = obj_vecs + obj_vecs_
+        
         obj_vecs = F.pad(obj_vecs, pad=(0, 0, max_length[0] - obj_vecs.size(0), 0))
 
-        if return_preds:
-            pred_vecs = F.pad(pred_vecs, pad=(0, 0, max_length[1] - pred_vecs.size(0), 0))
+        # if return_preds:
+        #     pred_vecs = F.pad(pred_vecs, pad=(0, 0, max_length[1] - pred_vecs.size(0), 0))
 
-            # concat vectors
-            sg_embed = torch.cat([obj_vecs, pred_vecs], dim=0)
+        #     # concat vectors
+        #     sg_embed = torch.cat([obj_vecs, pred_vecs], dim=0)
         
-            return sg_embed
+        #     return sg_embed
         # # resize vector with interpolation
         # sg_embed = F.interpolate(sg_embed.unsqueeze(0), size=(out_shape[-2], out_shape[-1]), mode='bilinear', align_corners=False)
         # sg_embed = sg_embed.squeeze(0)
         # sg_embed = torch.cat([sg_embed] * out_shape[1], dim=0)
+
+
         
         return obj_vecs 
 
