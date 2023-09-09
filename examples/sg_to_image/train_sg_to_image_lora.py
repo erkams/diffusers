@@ -47,6 +47,7 @@ from diffusers.models.attention_processor import LoRAAttnProcessor
 from diffusers.optimization import get_scheduler
 from diffusers.utils import check_min_version, is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
+from utils import ObjectDetectionMetrics, compute_average_precision
 
 from utils import ListDataset
 import torch_fidelity
@@ -472,6 +473,10 @@ def main():
         'KID': (torch_fidelity.KEY_METRIC_KID_MEAN, float('inf'), float.__lt__),
         'PPL': (torch_fidelity.KEY_METRIC_PPL_MEAN, float('inf'), float.__lt__),
     }[args.leading_metric]
+
+    isc_metric, last_best_isc, isc_cmp = torch_fidelity.KEY_METRIC_ISC_MEAN, 0.0, float.__gt__
+
+    object_detection_metrics = ObjectDetectionMetrics()
 
     if accelerator.is_local_main_process:
         datasets.utils.logging.set_verbosity_warning()
@@ -991,6 +996,7 @@ def main():
     
     def evaluation_step(global_step):
         nonlocal last_best_metric
+        nonlocal last_best_isc
         # Calculate FID metric on a subset of validation images
         logger.info(
             f"Running evaluation... \n Generating {args.num_eval_images} images"
@@ -1029,11 +1035,40 @@ def main():
             verbose=False)
         
         accelerator.log({args.leading_metric.upper(): metrics[leading_metric]}, step=global_step)
+        accelerator.log({"IS": metrics[isc_metric]}, step=global_step)
 
         # save the generator if it improved
         if metric_greater_cmp(metrics[leading_metric], last_best_metric):
             print(f'Leading metric {args.leading_metric} improved from {last_best_metric} to {metrics[leading_metric]}')
             last_best_metric = metrics[leading_metric]
+
+        # save the generator if it improved
+        if metric_greater_cmp(metrics[isc_metric], last_best_isc):
+            print(
+                f'Leading metric IS improved from {last_best_isc} to {metrics[isc_metric]}')
+            last_best_isc = metrics[isc_metric]
+
+        precision_box = []
+        recall_box = []
+        precision_obj = []
+        recall_obj = []
+        num_objs = []
+        for i in range(len(images)):
+            boxes_gt = val_dset[i]['boxes'][:-1]
+            objects_gt = val_dset[i]['objects'][:-1]
+            pb, rb, po, ro, num_objs = object_detection_metrics.calculate(images[i], boxes_gt, objects_gt)
+            precision_box.append(pb)
+            recall_box.append(rb)
+            precision_obj.append(po)
+            recall_obj.append(ro)
+            num_objs.append(num_objs)
+
+        ap_box = compute_average_precision(precision_box, recall_box)
+        ap_obj = compute_average_precision(precision_obj, recall_obj)
+        accelerator.log({"AP_BOX": ap_box}, step=global_step)
+        accelerator.log({"AP_OBJ": ap_obj}, step=global_step)
+        accelerator.log({"NUM_OBJS": torch.tensor(num_objs).float().mean().item()}, step=global_step)
+
 
     # torch.backends.cudnn.enabled = False
     logger.info("***** Running eval check *****")

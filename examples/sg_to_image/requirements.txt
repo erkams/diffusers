@@ -9,3 +9,4 @@ torch_fidelity
 matplotlib
 bitsandbytes
 scipy
+ultralytics~=8.0.172
