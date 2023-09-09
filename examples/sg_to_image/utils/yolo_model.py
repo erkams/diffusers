@@ -52,14 +52,21 @@ class ObjectDetectionMetrics:
             true_positives[i] = 1
             false_positives[i] = 0
 
-        precision_box = np.sum(true_positives) / (np.sum(true_positives) + np.sum(false_positives))
-        recall_box = np.sum(true_positives) / num_ground_truth
-        ordered_boxes_pred = [boxes_pred[perm[i]] for i in range(len(perm))]  # only the true positives
-        false_positives = len(boxes_pred) - len(ordered_boxes_pred)
+        cumulative_true_positives = np.cumsum(true_positives)
+        cumulative_false_positives = np.cumsum(false_positives)
+        precision_box = []
+        recall_box = []
+        for i in range(num_predictions):
+            precision_box.append(cumulative_true_positives[i] / (i + 1))
+            recall_box.append(cumulative_true_positives[i] / num_ground_truth)
+
+        ap_box = compute_average_precision(precision_box, recall_box)
 
         # check if the objects are correct
+        ordered_boxes_pred = [boxes_pred[perm[i]] for i in range(len(perm))]
+
         objs = []
-        for box in boxes_pred:
+        for box in ordered_boxes_pred:
             mask = create_binary_mask(box, 640, padding=5)
 
             masked_im = T.ToTensor()(img) * mask
@@ -69,16 +76,26 @@ class ObjectDetectionMetrics:
             if len(results[0].boxes.cls) > 0:
                 objs.append(int(results[0].boxes.cls[0].item()))
 
-        for obj_gt, obj_pred in zip(objects_gt, objs):
-            if obj_gt == obj_pred:
-                true_positives += 1
-            else:
-                false_positives += 1
+        true_positives = np.zeros(num_predictions)
+        false_positives = np.ones(num_predictions)
 
-        precision_obj = true_positives / (true_positives + false_positives)
-        recall_obj = true_positives / num_ground_truth
+        for i in range(num_predictions):
+            if objs[i] == objects_gt[i]:
+                true_positives[i] = 1
+                false_positives[i] = 0
 
-        return precision_box, recall_box, precision_obj, recall_obj, len(boxes_pred)
+        cumulative_true_positives = np.cumsum(true_positives)
+        cumulative_false_positives = np.cumsum(false_positives)
+
+        precision_obj = []
+        recall_obj = []
+        for i in range(num_predictions):
+            precision_obj.append(cumulative_true_positives[i] / (i + 1))
+            recall_obj.append(cumulative_true_positives[i] / num_ground_truth)
+
+        ap_obj = compute_average_precision(precision_obj, recall_obj)
+
+        return ap_box, ap_obj, len(boxes_pred)
 
 
 def is_bbox_contained(bbox1, bbox2):
@@ -178,6 +195,9 @@ def calculate_iou(box1, box2):
 
 def compute_average_precision(precision, recall):
     # Compute Average Precision (AP) using precision-recall values
+    precision = [1, *precision]
+    recall = [0, *recall]
+
     ap = 0
     for i in range(1, len(precision)):
         ap += (recall[i] - recall[i - 1]) * precision[i]

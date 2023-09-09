@@ -87,6 +87,7 @@ These are LoRA adaption weights for {base_model}. The weights were fine-tuned on
 
     print(f"*** Model card saved in {repo_folder} ***")
 
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Simple example of a training script.")
     parser.add_argument(
@@ -166,11 +167,12 @@ def parse_args():
         "--cond_place",
         type=str,
         default="attn",
-        choices= ["latent", "attn"],
+        choices=["latent", "attn"],
         help="Where to append the condition",
     )
     parser.add_argument(
-        "--const_train_prompt", type=str, default="", help="A prompt to be used constantly for training as a prefix to the caption."
+        "--const_train_prompt", type=str, default="",
+        help="A prompt to be used constantly for training as a prefix to the caption."
     )
     parser.add_argument(
         "--caption_type",
@@ -340,7 +342,6 @@ def parse_args():
         "--start_lora", type=int, default=500, help="Number of steps after to start the lora training."
     )
     parser.add_argument("--vocab_json", type=str, default="mnt/students/vocab.json", help="The path to the vocab file.")
-
 
     parser.add_argument("--adam_beta1", type=float, default=0.9, help="The beta1 parameter for the Adam optimizer.")
     parser.add_argument("--adam_beta2", type=float, default=0.999, help="The beta2 parameter for the Adam optimizer.")
@@ -515,10 +516,10 @@ def main():
 
     if args.train_sg:
         from simsg import SGModel
-        
+
         with open(args.vocab_json, 'r') as f:
             vocab = json.load(f)
-        
+
         kwargs = {
             'vocab': vocab,
             'embedding_dim': 1024,
@@ -545,7 +546,6 @@ def main():
         sg_net.enable_embedding(text_encoder=text_encoder, tokenizer=tokenizer)
         sg_net.image_size = 64
         sg_net.requires_grad_(False)
-
 
     # freeze parameters of models to save more memory
     unet.requires_grad_(False)
@@ -575,8 +575,8 @@ def main():
         text_encoder.text_model.embeddings.position_embedding.parameters(),
     )
     for param in params_to_freeze:
-      param.requires_grad = False
-      
+        param.requires_grad = False
+
     if args.enable_xformers_memory_efficient_attention:
         if is_xformers_available():
             unet.enable_xformers_memory_efficient_attention()
@@ -623,7 +623,8 @@ def main():
                 block_id = int(name[len("down_blocks.")])
                 hidden_size = unet.config.block_out_channels[block_id]
 
-            lora_attn_procs[name] = LoRAAttnProcessor(hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, rank=args.lora_rank)
+            lora_attn_procs[name] = LoRAAttnProcessor(hidden_size=hidden_size, cross_attention_dim=cross_attention_dim,
+                                                      rank=args.lora_rank)
 
         unet.set_attn_processor(lora_attn_procs)
 
@@ -666,13 +667,12 @@ def main():
 
     if args.scale_lr:
         args.learning_rate_lora = (
-            args.learning_rate_lora * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
+                args.learning_rate_lora * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
         )
 
         args.learning_rate_sg = (
-            args.learning_rate_sg * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
+                args.learning_rate_sg * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
         )
-
 
     if args.train_sg:
         # optimizer = optimizer_cls(
@@ -764,26 +764,29 @@ def main():
             raise ValueError(
                 f"--objects_column' value '{args.objects_column}' needs to be one of: {', '.join(column_names)}"
             )
-    
+
     def prepare_sg_embeds(examples, is_train=True):
-        max_length=(7, 21)
+        max_length = (7, 21)
         sg_embeds = []
-        for triplets, boxes, objects in zip(examples[triplets_column], examples[boxes_column], examples[objects_column]):
+        for triplets, boxes, objects in zip(examples[triplets_column], examples[boxes_column],
+                                            examples[objects_column]):
             if is_train:
                 random.shuffle(triplets)
             if args.train_sg:
                 embed = sg_net(triplets, objects, boxes, max_length=max_length, batch_size=args.train_batch_size)
             else:
-                embed = sg_net.encode_sg(triplets, objects, boxes, max_length=max_length, batch_size=args.train_batch_size)
+                embed = sg_net.encode_sg(triplets, objects, boxes, max_length=max_length,
+                                         batch_size=args.train_batch_size)
 
             sg_embeds.append(embed)
 
         sg_embed = torch.stack(sg_embeds, dim=0)
         if args.cond_place == 'latent':
             # here 2 is an hyperparameter
-            out_shape = (1, 2, args.resolution/vae.config.scaling_factor, args.resolution/vae.config.scaling_factor)
+            out_shape = (1, 2, args.resolution / vae.config.scaling_factor, args.resolution / vae.config.scaling_factor)
             # resize vector with interpolation
-            sg_embed = F.interpolate(sg_embed, size=(out_shape[-2], out_shape[-1]), mode='bilinear', align_corners=False)
+            sg_embed = F.interpolate(sg_embed, size=(out_shape[-2], out_shape[-1]), mode='bilinear',
+                                     align_corners=False)
             sg_embed = sg_embed.squeeze(0)
             sg_embed = torch.cat([sg_embed] * out_shape[1], dim=0)
 
@@ -801,19 +804,19 @@ def main():
             return args.const_train_prompt
         elif args.caption_type == 'objects':
             objects = list(set(caption.replace(' is right of', ',')
-                     .replace(' is left of', ',')
-                     .replace(' is front of', ',')
-                     .replace(' is behind', ',')
-                     .split(', ')))
+                               .replace(' is left of', ',')
+                               .replace(' is front of', ',')
+                               .replace(' is behind', ',')
+                               .split(', ')))
             return ", ".join(objects)
         elif args.caption_type == 'triplets':
             return caption
-    
+
     # Preprocessing the datasets.
     # We need to tokenize input captions and transform the images.
     def tokenize_captions(examples, is_train=True):
         if args.caption_type == 'none':
-            return torch.zeros((len(examples[caption_column]),77), device=accelerator.device)
+            return torch.zeros((len(examples[caption_column]), 77), device=accelerator.device)
         captions = []
         for caption in examples[caption_column]:
             caption = get_caption(caption)
@@ -847,22 +850,26 @@ def main():
 
     def preprocess_train(examples):
         images = [image.convert("RGB") for image in examples[image_column]]
-        examples[triplets_column] = [torch.tensor(triplets, device=accelerator.device) for triplets in examples[triplets_column]]
+        examples[triplets_column] = [torch.tensor(triplets, device=accelerator.device) for triplets in
+                                     examples[triplets_column]]
         examples[boxes_column] = [torch.tensor(boxes, device=accelerator.device) for boxes in examples[boxes_column]]
-        examples[objects_column] = [torch.tensor(objects, device=accelerator.device) for objects in examples[objects_column]]
+        examples[objects_column] = [torch.tensor(objects, device=accelerator.device) for objects in
+                                    examples[objects_column]]
         examples["pixel_values"] = [train_transforms(image) for image in images]
         examples["input_ids"] = tokenize_captions(examples)
         examples["sg_embeds"] = prepare_sg_embeds(examples)
         return examples
-    
+
     def preprocess_val(examples):
-        examples[triplets_column] = [torch.tensor(triplets, device=accelerator.device) for triplets in examples[triplets_column]]
+        examples[triplets_column] = [torch.tensor(triplets, device=accelerator.device) for triplets in
+                                     examples[triplets_column]]
         examples[boxes_column] = [torch.tensor(boxes, device=accelerator.device) for boxes in examples[boxes_column]]
-        examples[objects_column] = [torch.tensor(objects, device=accelerator.device) for objects in examples[objects_column]]
+        examples[objects_column] = [torch.tensor(objects, device=accelerator.device) for objects in
+                                    examples[objects_column]]
         examples["input_ids"] = tokenize_captions(examples, is_train=False).to(accelerator.device)
         examples["sg_embeds"] = prepare_sg_embeds(examples, is_train=False)
         return examples
-        
+
     with accelerator.main_process_first():
         if args.max_train_samples is not None:
             dataset["train"] = dataset["train"].shuffle(seed=args.seed).select(range(args.max_train_samples))
@@ -874,7 +881,8 @@ def main():
         pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
         input_ids = torch.stack([example["input_ids"] for example in examples])
         sg_embeds = torch.stack([example["sg_embeds"] for example in examples])
-        return {"pixel_values": pixel_values, "input_ids": input_ids, "sg_embeds": sg_embeds, "prompt": examples[0][caption_column],
+        return {"pixel_values": pixel_values, "input_ids": input_ids, "sg_embeds": sg_embeds,
+                "prompt": examples[0][caption_column],
                 "triplets": examples[0][triplets_column], "boxes": examples[0][boxes_column]}
 
     # DataLoaders creation:
@@ -967,16 +975,16 @@ def main():
         # run inference
         generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
         images = []
-        
+
         print(f'***VAL*** sg embed shape: {val_sample["sg_embeds"].shape}') if epoch == 0 else None
 
         for _ in range(args.num_validation_images):
             images.append(
                 pipeline(prompt_embeds=
-                         handle_hidden_states(input_ids=val_sample["input_ids"], condition=val_sample["sg_embeds"]), 
-                         height= args.resolution,
-                         width= args.resolution,
-                         num_inference_steps=30, 
+                         handle_hidden_states(input_ids=val_sample["input_ids"], condition=val_sample["sg_embeds"]),
+                         height=args.resolution,
+                         width=args.resolution,
+                         num_inference_steps=30,
                          generator=generator).images[0]
             )
 
@@ -993,7 +1001,7 @@ def main():
                         ]
                     }
                 )
-    
+
     def evaluation_step(global_step):
         nonlocal last_best_metric
         nonlocal last_best_isc
@@ -1015,25 +1023,27 @@ def main():
         # run inference
         generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
         images = []
-        
+
         val_dset = dataset['val'].with_transform(preprocess_val)[:args.num_eval_images]
 
         for input_ids, sg_embeds in zip(val_dset['input_ids'], val_dset['sg_embeds']):
             input_ids = input_ids.unsqueeze(0).to(accelerator.device)
             sg_embeds = sg_embeds.unsqueeze(0).to(accelerator.device)
             print(f'***VAL*** sg embed shape: {sg_embeds.shape}') if global_step == 0 else None
-            
-            images.append(pipeline(prompt_embeds=handle_hidden_states(input_ids=input_ids, condition=sg_embeds), height= args.resolution, width= args.resolution, num_inference_steps=30, generator=generator).images[0])
-        
+
+            images.append(pipeline(prompt_embeds=handle_hidden_states(input_ids=input_ids, condition=sg_embeds),
+                                   height=args.resolution, width=args.resolution, num_inference_steps=30,
+                                   generator=generator).images[0])
+
         metrics = torch_fidelity.calculate_metrics(
             input1=ListDataset(images),
             input2=ListDataset(dataset['val'][:args.num_eval_images][image_column]),
-            cuda=True, 
-            isc=True, 
-            fid=True, 
-            kid=False, 
+            cuda=True,
+            isc=True,
+            fid=True,
+            kid=False,
             verbose=False)
-        
+
         accelerator.log({args.leading_metric.upper(): metrics[leading_metric]}, step=global_step)
         accelerator.log({"IS": metrics[isc_metric]}, step=global_step)
 
@@ -1048,27 +1058,20 @@ def main():
                 f'Leading metric IS improved from {last_best_isc} to {metrics[isc_metric]}')
             last_best_isc = metrics[isc_metric]
 
-        precision_box = []
-        recall_box = []
-        precision_obj = []
-        recall_obj = []
-        num_objs = []
+        box_aps = 0.
+        obj_aps = 0.
+        num_objs = 0.
         for i in range(len(images)):
             boxes_gt = val_dset[i]['boxes'][:-1]
             objects_gt = val_dset[i]['objects'][:-1]
-            pb, rb, po, ro, num_objs = object_detection_metrics.calculate(images[i], boxes_gt, objects_gt)
-            precision_box.append(pb)
-            recall_box.append(rb)
-            precision_obj.append(po)
-            recall_obj.append(ro)
-            num_objs.append(num_objs)
+            ap_box, ap_obj, num_objs = object_detection_metrics.calculate(images[i], boxes_gt, objects_gt)
+            box_aps += ap_box
+            obj_aps += ap_obj
+            num_objs += num_objs
 
-        ap_box = compute_average_precision(precision_box, recall_box)
-        ap_obj = compute_average_precision(precision_obj, recall_obj)
-        accelerator.log({"AP_BOX": ap_box}, step=global_step)
-        accelerator.log({"AP_OBJ": ap_obj}, step=global_step)
-        accelerator.log({"NUM_OBJS": torch.tensor(num_objs).float().mean().item()}, step=global_step)
-
+        accelerator.log({"mAP_BOX": box_aps / len(images)}, step=global_step)
+        accelerator.log({"mAP_OBJ": obj_aps / len(images)}, step=global_step)
+        accelerator.log({"NUM_OBJS": num_objs / len(images)}, step=global_step)
 
     # torch.backends.cudnn.enabled = False
     logger.info("***** Running eval check *****")
@@ -1113,9 +1116,9 @@ def main():
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(range(global_step, args.max_train_steps), disable=not accelerator.is_local_main_process)
     progress_bar.set_description("Steps")
-    
+
     for epoch in range(first_epoch, args.num_train_epochs):
-        
+
         train_loss = 0.0
         for step, batch in enumerate(train_dataloader):
             # Skip steps until we reach the resumed step
@@ -1166,7 +1169,8 @@ def main():
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
                 # Predict the noise residual and compute loss
-                model_pred = unet(noisy_latents, timesteps, handle_hidden_states(input_ids=batch["input_ids"], condition=batch['sg_embeds'])).sample
+                model_pred = unet(noisy_latents, timesteps, handle_hidden_states(input_ids=batch["input_ids"],
+                                                                                 condition=batch['sg_embeds'])).sample
                 loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
 
                 # Gather the losses across all processes for logging (if we use distributed training).
@@ -1182,7 +1186,7 @@ def main():
                     optimizer_lora.step()
                     lr_scheduler_lora.step()
                     optimizer_lora.zero_grad()
-                
+
                 optimizer_sg.step()
                 lr_scheduler_sg.step()
                 optimizer_sg.zero_grad()
@@ -1206,16 +1210,16 @@ def main():
             progress_bar.set_postfix(**logs)
             accelerator.log(logs, step=global_step)
 
-            if not train_lora and global_step +1 >= args.start_lora:
+            if not train_lora and global_step + 1 >= args.start_lora:
                 train_lora = True
                 unet.train()
                 print('starting lora training')
                 lora_layers, optimizer_lora, lr_scheduler_lora = set_lora_layers()
-                lora_layers, optimizer_lora, lr_scheduler_lora = accelerator.prepare(lora_layers, optimizer_lora, lr_scheduler_lora)
+                lora_layers, optimizer_lora, lr_scheduler_lora = accelerator.prepare(lora_layers, optimizer_lora,
+                                                                                     lr_scheduler_lora)
 
             if global_step >= args.max_train_steps:
                 break
-
 
         if accelerator.is_main_process:
             if epoch % (4 * args.validation_epochs) == 0:
