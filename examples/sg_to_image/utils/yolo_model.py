@@ -20,7 +20,7 @@ class ObjectDetectionMetrics:
     def calculate(self, img, boxes_gt, objects_gt):
         results = self.sam_model(img, conf=0.75, iou=0.4, max_det=20, device='cpu')
         if len(results[0].boxes.data) == 0:
-            return 0
+            return 0, 0, 0
         boxes = sorted(results[0].boxes.data, key=lambda bbox: (bbox[2] - bbox[0]) * (bbox[3] - bbox[1]))
 
         boxes = [box[:-2] for box in boxes]
