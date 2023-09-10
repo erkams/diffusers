@@ -974,12 +974,12 @@ def main():
 
         # run inference
         generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
-        images = []
+        generated_images = []
 
-        print(f'***VAL*** sg embed shape: {val_sample["sg_embeds"].shape}') if epoch == 0 else None
+        # print(f'***VAL*** sg embed shape: {val_sample["sg_embeds"].shape}') if epoch == 0 else None
 
         for _ in range(args.num_validation_images):
-            images.append(
+            generated_images.append(
                 pipeline(prompt_embeds=
                          handle_hidden_states(input_ids=val_sample["input_ids"], condition=val_sample["sg_embeds"]),
                          height=args.resolution,
@@ -990,17 +990,18 @@ def main():
 
         for tracker in accelerator.trackers:
             if tracker.name == "tensorboard":
-                np_images = np.stack([np.asarray(img) for img in images])
+                np_images = np.stack([np.asarray(img) for img in generated_images])
                 tracker.writer.add_images("validation", np_images, epoch, dataformats="NHWC")
             if tracker.name == "wandb":
-                tracker.log(
-                    {
-                        "validation": [
-                            wandb.Image(image, caption=f"{i}: {validation_prompt}")
-                            for i, image in enumerate(images)
-                        ]
-                    }
-                )
+                img_gt = val_sample[image_column]
+                if isinstance(img_gt, list):
+                    img_gt = img_gt[0]
+                img_logs = [
+                    wandb.Image(image, caption=f"{i}: {validation_prompt}")
+                    for i, image in enumerate(generated_images)
+                ]
+                img_logs = [wandb.Image(img_gt, caption=f"Ground truth")] + img_logs
+                tracker.log({"validation": img_logs})
 
     def evaluation_step(global_step):
         nonlocal last_best_metric
@@ -1035,28 +1036,7 @@ def main():
                                    height=args.resolution, width=args.resolution, num_inference_steps=30,
                                    generator=generator).images[0])
 
-        metrics = torch_fidelity.calculate_metrics(
-            input1=ListDataset(images),
-            input2=ListDataset(dataset['val'][:args.num_eval_images][image_column]),
-            cuda=True,
-            isc=True,
-            fid=True,
-            kid=False,
-            verbose=False)
-
-        accelerator.log({args.leading_metric.upper(): metrics[leading_metric]}, step=global_step)
-        accelerator.log({"IS": metrics[isc_metric]}, step=global_step)
-
-        # save the generator if it improved
-        if metric_greater_cmp(metrics[leading_metric], last_best_metric):
-            print(f'Leading metric {args.leading_metric} improved from {last_best_metric} to {metrics[leading_metric]}')
-            last_best_metric = metrics[leading_metric]
-
-        # save the generator if it improved
-        if metric_greater_cmp(metrics[isc_metric], last_best_isc):
-            print(
-                f'Leading metric IS improved from {last_best_isc} to {metrics[isc_metric]}')
-            last_best_isc = metrics[isc_metric]
+        # BOX AND OBJECT DETECTION METRICS
 
         box_aps = 0.
         obj_aps = 0.
@@ -1082,6 +1062,31 @@ def main():
         logger.info(f"mAP_BOX: {box_aps / len(images)}")
         logger.info(f"mAP_OBJ: {obj_aps / len(images)}")
         logger.info(f"NUM_OBJS: {num_objs / len(images)}")
+
+        # FID AND IS METRICS
+
+        metrics = torch_fidelity.calculate_metrics(
+            input1=ListDataset(images),
+            input2=ListDataset(dataset['val'][:args.num_eval_images][image_column]),
+            cuda=True,
+            isc=True,
+            fid=True,
+            kid=False,
+            verbose=False)
+
+        accelerator.log({args.leading_metric.upper(): metrics[leading_metric]}, step=global_step)
+        accelerator.log({"IS": metrics[isc_metric]}, step=global_step)
+
+        # save the generator if it improved
+        if metric_greater_cmp(metrics[leading_metric], last_best_metric):
+            print(f'Leading metric {args.leading_metric} improved from {last_best_metric} to {metrics[leading_metric]}')
+            last_best_metric = metrics[leading_metric]
+
+        # save the generator if it improved
+        if metric_greater_cmp(metrics[isc_metric], last_best_isc):
+            print(
+                f'Leading metric IS improved from {last_best_isc} to {metrics[isc_metric]}')
+            last_best_isc = metrics[isc_metric]
 
     # torch.backends.cudnn.enabled = False
     logger.info("***** Running eval check *****")
