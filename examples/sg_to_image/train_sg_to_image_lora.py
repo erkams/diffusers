@@ -57,6 +57,8 @@ check_min_version("0.15.0.dev0")
 
 logger = get_logger(__name__, log_level="INFO")
 
+datasets.config.IN_MEMORY_MAX_SIZE = 3_000_000_000
+
 
 def save_model_card(repo_id: str, images=None, base_model=str, dataset_name=str, repo_folder=None):
     img_str = ""
@@ -711,6 +713,7 @@ def main():
             args.dataset_name,
             args.dataset_config_name,
             cache_dir=args.cache_dir,
+            keep_in_memory=True
         )
     else:
         data_files = {}
@@ -1045,6 +1048,9 @@ def main():
         all_objects_gt = val_dset['objects']
         for i in range(len(images)):
             boxes_gt = all_boxes_gt[i][:-1]
+            boxes_gt = boxes_gt * torch.tensor([320, 240, 320, 240]) - torch.tensor([40, 0, 40, 0])
+            boxes_gt = boxes_gt.clip(0, 240) / 240
+
             objects_gt = all_objects_gt[i][:-1]
             if global_step == 0:
                 print(f'Objects gt: {objects_gt}')
