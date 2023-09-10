@@ -766,7 +766,7 @@ def main():
             )
 
     def prepare_sg_embeds(examples, is_train=True):
-        max_length = (7, 21)
+        max_length = (8, 21)
         sg_embeds = []
         for triplets, boxes, objects in zip(examples[triplets_column], examples[boxes_column],
                                             examples[objects_column]):
