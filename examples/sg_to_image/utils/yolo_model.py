@@ -79,6 +79,9 @@ class ObjectDetectionMetrics:
 
         ap_box = compute_average_precision(precision_box, recall_box)
 
+        if len(perm) == 0:
+            return ap_box, 0, len(boxes_pred)
+
         # check if the objects are correct
         ordered_boxes_pred = [boxes_pred[perm[i]] for i in range(len(perm))]
 
