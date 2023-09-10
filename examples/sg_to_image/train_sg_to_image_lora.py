@@ -451,7 +451,7 @@ def main():
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision=args.mixed_precision,
         log_with=args.report_to,
-        logging_dir=logging_dir,
+        # logging_dir=logging_dir,
         project_config=accelerator_project_config,
     )
     if args.report_to == "wandb":
@@ -1061,9 +1061,11 @@ def main():
         box_aps = 0.
         obj_aps = 0.
         num_objs = 0.
+        all_boxes_gt = val_dset['boxes']
+        all_objects_gt = val_dset['objects']
         for i in range(len(images)):
-            boxes_gt = val_dset[i]['boxes'][:-1]
-            objects_gt = val_dset[i]['objects'][:-1]
+            boxes_gt = all_boxes_gt[i][:-1]
+            objects_gt = all_objects_gt[i][:-1]
             ap_box, ap_obj, num_objs = object_detection_metrics.calculate(images[i], boxes_gt, objects_gt)
             box_aps += ap_box
             obj_aps += ap_obj
