@@ -120,8 +120,13 @@ def is_bbox_contained(bbox1, bbox2):
     Returns:
     - True if bbox1 contains bbox2, False otherwise.
     """
+    # check if they are torch tensor
+    if isinstance(bbox1, torch.Tensor):
+        bbox1 = bbox1.tolist()
+    if isinstance(bbox2, torch.Tensor):
+        bbox2 = bbox2.tolist()
 
-    if bbox1.tolist() == bbox2.tolist():
+    if bbox1 == bbox2:
         return False
     x1_1, y1_1, x2_1, y2_1 = bbox1
     x1_2, y1_2, x2_2, y2_2 = bbox2
