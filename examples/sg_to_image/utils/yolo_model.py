@@ -18,7 +18,14 @@ class ObjectDetectionMetrics:
         self.sam_model = FastSAM('FastSAM-s.pt')
 
     def calculate(self, img, boxes_gt, objects_gt):
-        img = T.ToPILImage()(img)
+        # check if img is Tensor or PIL Image
+        if isinstance(img, torch.Tensor):
+            img = T.ToPILImage()(img)
+        elif isinstance(img, np.ndarray):
+            img = Image.fromarray(img)
+        elif not isinstance(img, Image.Image):
+            raise TypeError("img should be Tensor, PIL Image or numpy array")
+
         img = img.resize((640, 640), Image.BILINEAR)
 
         results = self.sam_model(img, conf=0.75, iou=0.4, max_det=20, device='cpu', verbose=False)
