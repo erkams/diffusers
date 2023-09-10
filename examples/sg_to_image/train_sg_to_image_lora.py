@@ -1048,7 +1048,7 @@ def main():
         all_objects_gt = val_dset['objects']
         for i in range(len(images)):
             boxes_gt = all_boxes_gt[i][:-1]
-            boxes_gt = boxes_gt * torch.tensor([320, 240, 320, 240]) - torch.tensor([40, 0, 40, 0])
+            boxes_gt = boxes_gt * torch.tensor([320, 240, 320, 240]).to(accelerator.device) - torch.tensor([40, 0, 40, 0]).to(accelerator.device)
             boxes_gt = boxes_gt.clip(0, 240) / 240
 
             objects_gt = all_objects_gt[i][:-1]
