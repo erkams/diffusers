@@ -1075,6 +1075,11 @@ def main():
         accelerator.log({"mAP_OBJ": obj_aps / len(images)}, step=global_step)
         accelerator.log({"NUM_OBJS": num_objs / len(images)}, step=global_step)
 
+        logger.info("***** Eval results *****")
+        logger.info(f"mAP_BOX: {box_aps / len(images)}")
+        logger.info(f"mAP_OBJ: {obj_aps / len(images)}")
+        logger.info(f"NUM_OBJS: {num_objs / len(images)}")
+
     # torch.backends.cudnn.enabled = False
     logger.info("***** Running eval check *****")
     evaluation_step(0)
