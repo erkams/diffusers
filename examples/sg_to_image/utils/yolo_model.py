@@ -86,7 +86,7 @@ class ObjectDetectionMetrics:
             return ap_box, 0, len(boxes_pred)
 
         # check if the objects are correct
-        ordered_boxes_pred = [boxes_pred[perm[i]] for i in range(len(perm))]
+        ordered_boxes_pred = [boxes_pred[perm[i]] for i in perm.keys()]
 
         num_preds = len(ordered_boxes_pred)
         objs = np.zeros(num_preds)
