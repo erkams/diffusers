@@ -8,7 +8,7 @@ import numpy as np
 
 
 class ObjectDetectionMetrics:
-    def __init__(self, iou=0.5) -> None:
+    def __init__(self, iou=0.4) -> None:
         super().__init__()
 
         model_path = hf_hub_download(repo_id='erkam/yolo-clevr', filename='best.pt')
@@ -18,11 +18,19 @@ class ObjectDetectionMetrics:
         self.sam_model = FastSAM('FastSAM-s.pt')
 
     def calculate(self, img, boxes_gt, objects_gt):
-        results = self.sam_model(img, conf=0.75, iou=0.4, max_det=20, device='cpu')
+        img = T.ToPILImage()(img)
+        img = img.resize((640, 640), Image.BILINEAR)
+
+        results = self.sam_model(img, conf=0.75, iou=0.4, max_det=20, device='cpu', verbose=False)
+
         if len(results[0].boxes.data) == 0:
             return 0, 0, 0
-        boxes = sorted(results[0].boxes.data, key=lambda bbox: (bbox[2] - bbox[0]) * (bbox[3] - bbox[1]))
 
+        boxes = results[0].boxes.data / torch.tensor([img.size[0], img.size[1], img.size[0], img.size[1], 1, 1],
+                                                     dtype=torch.float32)
+        boxes = boxes.tolist()
+        boxes = sorted(boxes, key=lambda bbox: (bbox[2] - bbox[0]) * (bbox[3] - bbox[1]))
+        print(boxes)
         boxes = [box[:-2] for box in boxes]
         boxes_pred = filter_boxes(boxes)
 
@@ -65,8 +73,9 @@ class ObjectDetectionMetrics:
         # check if the objects are correct
         ordered_boxes_pred = [boxes_pred[perm[i]] for i in range(len(perm))]
 
-        objs = []
-        for box in ordered_boxes_pred:
+        num_preds = len(ordered_boxes_pred)
+        objs = np.zeros(num_preds)
+        for i, box in enumerate(ordered_boxes_pred):
             mask = create_binary_mask(box, 640, padding=5)
 
             masked_im = T.ToTensor()(img) * mask
@@ -74,12 +83,14 @@ class ObjectDetectionMetrics:
             results = self.yolo_model.predict(masked_im, augment=True, conf=0.2, iou=0.4, max_det=1, agnostic_nms=True,
                                               verbose=False, device='cpu')
             if len(results[0].boxes.cls) > 0:
-                objs.append(int(results[0].boxes.cls[0].item()))
+                objs[i] = int(results[0].boxes.cls[0].item())
 
-        true_positives = np.zeros(num_predictions)
-        false_positives = np.ones(num_predictions)
+        true_positives = np.zeros(num_preds)
+        false_positives = np.ones(num_preds)
 
-        for i in range(num_predictions):
+        for i in range(num_preds):
+            if i >= len(objects_gt):
+                continue
             if objs[i] == objects_gt[i]:
                 true_positives[i] = 1
                 false_positives[i] = 0
@@ -89,7 +100,7 @@ class ObjectDetectionMetrics:
 
         precision_obj = []
         recall_obj = []
-        for i in range(num_predictions):
+        for i in range(num_preds):
             precision_obj.append(cumulative_true_positives[i] / (i + 1))
             recall_obj.append(cumulative_true_positives[i] / num_ground_truth)
 
