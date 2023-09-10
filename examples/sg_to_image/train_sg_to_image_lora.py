@@ -1066,6 +1066,9 @@ def main():
         for i in range(len(images)):
             boxes_gt = all_boxes_gt[i][:-1]
             objects_gt = all_objects_gt[i][:-1]
+            if global_step == 0:
+                print(f'Objects gt: {objects_gt}')
+                print(f'Boxes gt: {boxes_gt}')
             ap_box, ap_obj, num_objs = object_detection_metrics.calculate(images[i], boxes_gt, objects_gt)
             box_aps += ap_box
             obj_aps += ap_obj

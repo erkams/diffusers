@@ -43,6 +43,9 @@ class ObjectDetectionMetrics:
         boxes = [box[:-2] for box in boxes]
         boxes_pred = filter_boxes(boxes)
 
+        if len(boxes_pred) == 0:
+            return 0, 0, 0
+
         num_ground_truth = len(boxes_gt)
         num_predictions = len(boxes_pred)
 
