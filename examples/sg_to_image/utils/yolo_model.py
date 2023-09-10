@@ -19,6 +19,8 @@ class ObjectDetectionMetrics:
 
     def calculate(self, img, boxes_gt, objects_gt):
         # check if img is Tensor or PIL Image
+        print(f'img type: {type(img)}')
+
         if isinstance(img, torch.Tensor):
             img = T.ToPILImage()(img)
         elif isinstance(img, np.ndarray):
