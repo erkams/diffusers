@@ -173,7 +173,7 @@ class SGModel(nn.Module):
             vecs = self.text_encoder(tokens)[0]
 
             # take average of the tokens to get a overall 1-dim embedding for each objects (num_objs, 1024)
-            vecs = vecs.mean(axis=-2)
+            vecs = vecs[:, tokens.argmax(dim=-1), :]
 
             return vecs
         
