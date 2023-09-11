@@ -147,8 +147,14 @@ class SGModel(nn.Module):
         objs = torch.tensor(objects, dtype=torch.long, device=triples.device)
         # print(f'objs shape: {objs.shape}')
         # print(f'pred shape: {p.shape}')
+
+        self.vocab['object_idx_to_name'][0] = "the image"
+        self.vocab['pred_idx_to_name'][0] = "in"
+
         obj_names = [self.vocab['object_idx_to_name'][i] for i in objs.cpu().numpy()]
+
         p_names = [self.vocab['pred_idx_to_name'][i] for i in p.cpu().numpy()]
+
         # print(f'obj names: {len(obj_names)}')
         # print(f'p_names shape: {len(p_names)}')
         
@@ -233,8 +239,6 @@ class SGModel(nn.Module):
         # sg_embed = F.interpolate(sg_embed.unsqueeze(0), size=(out_shape[-2], out_shape[-1]), mode='bilinear', align_corners=False)
         # sg_embed = sg_embed.squeeze(0)
         # sg_embed = torch.cat([sg_embed] * out_shape[1], dim=0)
-
-
         
         return obj_vecs 
 
