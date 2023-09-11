@@ -492,6 +492,9 @@ def make_grid(imgs: List[Image.Image], rows: int, cols: int) -> Image.Image:
     width, height = (64, 64)
     grid = Image.new("RGB", (cols * width, rows * height))
     for i, img in enumerate(imgs):
+        # convert to PIL if it's a tensor
+        if isinstance(img, torch.Tensor):
+            img = transforms.ToPILImage()(img)
         grid.paste(img.resize((width, height)), box=(width * (i % cols), height * (i // cols)))
     return grid
 
