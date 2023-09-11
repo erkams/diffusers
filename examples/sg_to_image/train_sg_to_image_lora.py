@@ -489,10 +489,10 @@ def make_grid(imgs: List[Image.Image], rows: int, cols: int) -> Image.Image:
         The grid of images.
     """
 
-    width, height = imgs[0].size
+    width, height = (64, 64)
     grid = Image.new("RGB", (cols * width, rows * height))
     for i, img in enumerate(imgs):
-        grid.paste(img, box=(width * (i % cols), height * (i // cols)))
+        grid.paste(img.resize((width, height)), box=(width * (i % cols), height * (i // cols)))
     return grid
 
 
