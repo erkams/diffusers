@@ -20,7 +20,7 @@ import math
 import os
 import random
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union, List
 import itertools
 import json
 
@@ -30,6 +30,7 @@ import torch
 import torch.nn.functional as F
 import torch.utils.checkpoint
 import transformers
+from PIL import Image
 from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import ProjectConfiguration, set_seed
@@ -319,7 +320,7 @@ def parse_args():
         type=float,
         default=5.0,
         help="SNR weighting gamma to be used if rebalancing the loss. Recommended value is 5.0. "
-        "More details here: https://arxiv.org/abs/2303.09556.",
+             "More details here: https://arxiv.org/abs/2303.09556.",
     )
     parser.add_argument(
         "--use_8bit_adam", action="store_true", help="Whether or not to use 8-bit Adam from bitsandbytes."
@@ -448,6 +449,51 @@ def parse_args():
 DATASET_NAME_MAPPING = {
     "lambdalabs/pokemon-blip-captions": ("image", "text"),
 }
+
+
+def square_imgs(img: Union[Image.Image, List[Image.Image]], size: int) -> Union[Image.Image, List[Image.Image]]:
+    """
+    Crops the image to a square and resizes it to the given size.
+    Args:
+        img: The image to crop and resize.
+        size: The size to resize the image to.
+
+    Returns:
+        The cropped and resized image.
+    """
+
+    if isinstance(img, list):
+        return [square_imgs(i, size) for i in img]
+    width, height = img.size
+    if width == height:
+        return img.resize((size, size), Image.BILINEAR)
+    elif width > height:
+        diff = width - height
+        img = img.crop((diff // 2, 0, diff // 2 + height, height))
+        return img.resize((size, size), Image.BILINEAR)
+    else:
+        diff = height - width
+        img = img.crop((0, diff // 2, width, diff // 2 + width))
+        return img.resize((size, size), Image.BILINEAR)
+
+
+def make_grid(imgs: List[Image.Image], rows: int, cols: int) -> Image.Image:
+    """
+    Creates a grid of images.
+    Args:
+        imgs: The images to put in the grid.
+        rows: The number of rows in the grid.
+        cols: The number of columns in the grid.
+
+    Returns:
+        The grid of images.
+    """
+
+    width, height = imgs[0].size
+    grid = Image.new("RGB", (cols * width, rows * height))
+    for i, img in enumerate(imgs):
+        grid.paste(img, box=(width * (i % cols), height * (i // cols)))
+    return grid
 
 
 def main():
@@ -674,7 +720,7 @@ def main():
         Computes SNR as per https://github.com/TiankaiHang/Min-SNR-Diffusion-Training/blob/521b624bd70c67cee4bdf49225915f5945a872e3/guided_diffusion/gaussian_diffusion.py#L847-L849
         """
         alphas_cumprod = noise_scheduler.alphas_cumprod
-        sqrt_alphas_cumprod = alphas_cumprod**0.5
+        sqrt_alphas_cumprod = alphas_cumprod ** 0.5
         sqrt_one_minus_alphas_cumprod = (1.0 - alphas_cumprod) ** 0.5
 
         # Expand the tensors.
@@ -1082,16 +1128,29 @@ def main():
                                    height=args.resolution, width=args.resolution, num_inference_steps=30,
                                    generator=generator).images[0])
 
+        images_gt = val_dset['image']
+        images_gt = square_imgs(images_gt, args.resolution)
+
+        merged = []
+        for i in range(len(images)):
+            merged.append(images_gt[i])
+            merged.append(images[i])
+
+        grid = make_grid(merged, 5, 8)
+
+        wandb.log({"eval_images": [wandb.Image(grid, caption="Eval images")]})
+
         # BOX AND OBJECT DETECTION METRICS
 
         box_aps = 0.
         obj_aps = 0.
-        num_objs = 0.
+        sum_num_objs = 0.
         all_boxes_gt = val_dset['boxes']
         all_objects_gt = val_dset['objects']
         for i in range(len(images)):
             boxes_gt = all_boxes_gt[i][:-1]
-            boxes_gt = boxes_gt * torch.tensor([320, 240, 320, 240]).to(accelerator.device) - torch.tensor([40, 0, 40, 0]).to(accelerator.device)
+            boxes_gt = boxes_gt * torch.tensor([320, 240, 320, 240]).to(accelerator.device) - torch.tensor(
+                [40, 0, 40, 0]).to(accelerator.device)
             boxes_gt = boxes_gt.clip(0, 240) / 240
 
             objects_gt = all_objects_gt[i][:-1]
@@ -1101,16 +1160,16 @@ def main():
             ap_box, ap_obj, num_objs = object_detection_metrics.calculate(images[i], boxes_gt, objects_gt)
             box_aps += ap_box
             obj_aps += ap_obj
-            num_objs += num_objs
+            sum_num_objs += num_objs
 
         accelerator.log({"mAP_BOX": box_aps / len(images)}, step=global_step)
         accelerator.log({"mAP_OBJ": obj_aps / len(images)}, step=global_step)
-        accelerator.log({"NUM_OBJS": num_objs / len(images)}, step=global_step)
+        accelerator.log({"NUM_OBJS": sum_num_objs / len(images)}, step=global_step)
 
         logger.info("***** Eval results *****")
         logger.info(f"mAP_BOX: {box_aps / len(images)}")
         logger.info(f"mAP_OBJ: {obj_aps / len(images)}")
-        logger.info(f"NUM_OBJS: {num_objs / len(images)}")
+        logger.info(f"NUM_OBJS: {sum_num_objs / len(images)}")
 
         # FID AND IS METRICS
 
@@ -1244,7 +1303,7 @@ def main():
                     # This is discussed in Section 4.2 of the same paper.
                     snr = compute_snr(timesteps)
                     mse_loss_weights = (
-                        torch.stack([snr, args.snr_gamma * torch.ones_like(timesteps)], dim=1).min(dim=1)[0] / snr
+                            torch.stack([snr, args.snr_gamma * torch.ones_like(timesteps)], dim=1).min(dim=1)[0] / snr
                     )
                     # We first calculate the original loss. Then we mean over the non-batch dimensions and
                     # rebalance the sample-wise losses with their respective loss weights.
