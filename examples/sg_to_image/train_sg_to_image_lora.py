@@ -1128,19 +1128,6 @@ def main():
                                    height=args.resolution, width=args.resolution, num_inference_steps=30,
                                    generator=generator).images[0])
 
-        images_gt = val_dset['image']
-        images_gt = square_imgs(images_gt, args.resolution)
-
-        merged = []
-        for i in range(len(images)):
-            merged.append(images_gt[i])
-            merged.append(images[i])
-
-        grid = make_grid(merged, 5, 8)
-
-        for tracker in accelerator.trackers:
-            tracker.log({"eval_images": [wandb.Image(grid, caption="Eval images")]})
-
         # BOX AND OBJECT DETECTION METRICS
 
         box_aps = 0.
@@ -1196,6 +1183,19 @@ def main():
             print(
                 f'Leading metric IS improved from {last_best_isc} to {metrics[isc_metric]}')
             last_best_isc = metrics[isc_metric]
+
+        # VISUALIZE
+        images_gt = val_dset['image']
+        images_gt = square_imgs(images_gt, args.resolution)
+
+        merged = []
+        for i in range(len(images)):
+            merged.append(images_gt[i])
+            merged.append(images[i])
+
+        grid = make_grid(merged, 5, 8)
+
+        accelerator.log({"eval_images": [wandb.Image(grid, caption="Eval images")]})
 
     # torch.backends.cudnn.enabled = False
     logger.info("***** Running eval check *****")
