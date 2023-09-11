@@ -19,7 +19,7 @@ class ObjectDetectionMetrics:
 
     def calculate(self, img, boxes_gt, objects_gt):
         # check if img is Tensor or PIL Image
-        print(f'img type: {type(img)}')
+        # print(f'img type: {type(img)}')
 
         if isinstance(img, torch.Tensor):
             img = T.ToPILImage()(img)
@@ -39,7 +39,7 @@ class ObjectDetectionMetrics:
                                                      dtype=torch.float32)
         boxes = boxes.tolist()
         boxes = sorted(boxes, key=lambda bbox: (bbox[2] - bbox[0]) * (bbox[3] - bbox[1]))
-        print(boxes)
+        # print(boxes)
         boxes = [box[:-2] for box in boxes]
         boxes_pred = filter_boxes(boxes)
 
