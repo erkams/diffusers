@@ -1138,7 +1138,8 @@ def main():
 
         grid = make_grid(merged, 5, 8)
 
-        wandb.log({"eval_images": [wandb.Image(grid, caption="Eval images")]})
+        for tracker in accelerator.trackers:
+            tracker.log({"eval_images": [wandb.Image(grid, caption="Eval images")]})
 
         # BOX AND OBJECT DETECTION METRICS
 
@@ -1162,9 +1163,9 @@ def main():
             obj_aps += ap_obj
             sum_num_objs += num_objs
 
-        accelerator.log({"mAP_BOX": box_aps / len(images)}, step=global_step)
-        accelerator.log({"mAP_OBJ": obj_aps / len(images)}, step=global_step)
-        accelerator.log({"NUM_OBJS": sum_num_objs / len(images)}, step=global_step)
+        accelerator.log({"mAP_BOX": box_aps / len(images),
+                         "mAP_OBJ": obj_aps / len(images),
+                         "NUM_OBJS": sum_num_objs / len(images)}, step=global_step)
 
         logger.info("***** Eval results *****")
         logger.info(f"mAP_BOX: {box_aps / len(images)}")
@@ -1182,8 +1183,8 @@ def main():
             kid=False,
             verbose=False)
 
-        accelerator.log({args.leading_metric.upper(): metrics[leading_metric]}, step=global_step)
-        accelerator.log({"IS": metrics[isc_metric]}, step=global_step)
+        accelerator.log({args.leading_metric.upper(): metrics[leading_metric], "IS": metrics[isc_metric]},
+                        step=global_step)
 
         # save the generator if it improved
         if metric_greater_cmp(metrics[leading_metric], last_best_metric):
