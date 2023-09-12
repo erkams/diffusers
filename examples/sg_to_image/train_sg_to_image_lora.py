@@ -849,9 +849,9 @@ def main():
             )
 
     def prepare_sg_embeds(examples, is_train=True):
-        print(f'Preparing SG embeddings LEN={len(examples)}')
-        print(examples[objects_column])
-        print(examples[boxes_column])
+        print(
+            f'Preparing SG embeddings LEN objects={len(examples[objects_column])} during {"training" if is_train else "validation"}')
+        print(f'{examples[objects_column]}')
         print('-------------------')
         max_length = (8, 21)
         sg_embeds = []
@@ -902,10 +902,11 @@ def main():
     # Preprocessing the datasets.
     # We need to tokenize input captions and transform the images.
     def tokenize_captions(examples, is_train=True):
-        print(f'Preparing captions LEN={len(examples)} during {"train" if is_train else "eval"}')
+        print(f'Preparing captions during {"train" if is_train else "eval"}')
         print(examples[caption_column])
         print('-----0th------')
         print(examples[caption_column][0])
+        print('--------------')
 
         if args.caption_type == 'none':
             return torch.zeros((len(examples[caption_column]), 77), device=accelerator.device)
@@ -942,10 +943,10 @@ def main():
 
     def preprocess_train(examples):
         images = [image.convert("RGB") for image in examples[image_column]]
-        examples[triplets_column] = [torch.tensor(triplets, device=accelerator.device) for triplets in
+        examples[triplets_column] = [torch.tensor(triplets, device=accelerator.device, dtype=torch.long) for triplets in
                                      examples[triplets_column]]
         examples[boxes_column] = [torch.tensor(boxes, device=accelerator.device) for boxes in examples[boxes_column]]
-        examples[objects_column] = [torch.tensor(objects, device=accelerator.device) for objects in
+        examples[objects_column] = [torch.tensor(objects, device=accelerator.device, dtype=torch.long) for objects in
                                     examples[objects_column]]
         examples["pixel_values"] = [train_transforms(image) for image in images]
         examples["input_ids"] = tokenize_captions(examples)
@@ -953,10 +954,10 @@ def main():
         return examples
 
     def preprocess_val(examples):
-        examples[triplets_column] = [torch.tensor(triplets, device=accelerator.device) for triplets in
+        examples[triplets_column] = [torch.tensor(triplets, device=accelerator.device, dtype=torch.long) for triplets in
                                      examples[triplets_column]]
         examples[boxes_column] = [torch.tensor(boxes, device=accelerator.device) for boxes in examples[boxes_column]]
-        examples[objects_column] = [torch.tensor(objects, device=accelerator.device) for objects in
+        examples[objects_column] = [torch.tensor(objects, device=accelerator.device, dtype=torch.long) for objects in
                                     examples[objects_column]]
         examples["input_ids"] = tokenize_captions(examples, is_train=False).to(accelerator.device)
         examples["sg_embeds"] = prepare_sg_embeds(examples, is_train=False)
@@ -1041,9 +1042,11 @@ def main():
     def validation_step(epoch):
         # Prepare validation sample
         val_sample = dataset['val'][0]
-        val_sample[triplets_column] = [torch.tensor(val_sample[triplets_column], device=accelerator.device)]
+        val_sample[triplets_column] = [torch.tensor(val_sample[triplets_column], device=accelerator.device,
+                                                    dtype=torch.long)]
         val_sample[boxes_column] = [torch.tensor(val_sample[boxes_column], device=accelerator.device)]
-        val_sample[objects_column] = [torch.tensor(val_sample[objects_column], device=accelerator.device)]
+        val_sample[objects_column] = [torch.tensor(val_sample[objects_column], device=accelerator.device,
+                                                   dtype=torch.long)]
         val_sample[caption_column] = [val_sample[caption_column]]
         val_sample['sg_embeds'] = prepare_sg_embeds(val_sample)
         val_sample["input_ids"] = tokenize_captions(val_sample).to(accelerator.device)
@@ -1218,6 +1221,9 @@ def main():
     # torch.backends.cudnn.enabled = False
     logger.info("***** Running eval check *****")
     evaluation_step(0)
+    logger.info("***** Running validation check *****")
+    validation_step(0)
+
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
