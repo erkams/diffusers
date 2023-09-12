@@ -849,6 +849,10 @@ def main():
             )
 
     def prepare_sg_embeds(examples, is_train=True):
+        print(f'Preparing SG embeddings LEN={len(examples)}')
+        print(examples[objects_column])
+        print(examples[boxes_column])
+        print('-------------------')
         max_length = (8, 21)
         sg_embeds = []
         for triplets, boxes, objects in zip(examples[triplets_column], examples[boxes_column],
@@ -898,6 +902,11 @@ def main():
     # Preprocessing the datasets.
     # We need to tokenize input captions and transform the images.
     def tokenize_captions(examples, is_train=True):
+        print(f'Preparing captions LEN={len(examples)} during {"train" if is_train else "eval"}')
+        print(examples[caption_column])
+        print('-----0th------')
+        print(examples[caption_column][0])
+
         if args.caption_type == 'none':
             return torch.zeros((len(examples[caption_column]), 77), device=accelerator.device)
         captions = []
@@ -1125,7 +1134,7 @@ def main():
         for input_ids, sg_embeds in zip(val_dset['input_ids'], val_dset['sg_embeds']):
             input_ids = input_ids.unsqueeze(0).to(accelerator.device)
             sg_embeds = sg_embeds.unsqueeze(0).to(accelerator.device)
-            print(f'***VAL*** sg embed shape: {sg_embeds.shape}') if global_step == 0 else None
+            # print(f'***VAL*** sg embed shape: {sg_embeds.shape}') if global_step == 0 else None
 
             images.append(pipeline(prompt_embeds=handle_hidden_states(input_ids=input_ids, condition=sg_embeds),
                                    height=args.resolution, width=args.resolution, num_inference_steps=30,
@@ -1139,7 +1148,13 @@ def main():
         all_boxes_gt = val_dset['boxes']
         all_objects_gt = val_dset['objects']
         for i in range(len(images)):
+            if i == 0:
+                print(f'***EVAL*** boxes shape [{args.num_eval_images}] : {len(all_boxes_gt)}')
+                print(f'***EVAL*** objects shape [{args.num_eval_images}]: {len(all_objects_gt)}')
+
             boxes_gt = all_boxes_gt[i][:-1]
+            if i == 0:
+                print(f'***EVAL*** boxes_gt shape [b,4] : {boxes_gt.shape}')
             boxes_gt = boxes_gt * torch.tensor([320, 240, 320, 240]).to(accelerator.device) - torch.tensor(
                 [40, 0, 40, 0]).to(accelerator.device)
             boxes_gt = boxes_gt.clip(0, 240) / 240
@@ -1254,6 +1269,11 @@ def main():
                     progress_bar.update(1)
                 continue
 
+            if step == 0:
+                print(f'sg embed shape: {batch["sg_embeds"].shape}')
+                print(f'triplets: {batch["triplets"]}')
+                print(f'STEP: {step}')
+
             with accelerator.accumulate(unet):
                 # Convert images to latent space
                 latents = vae.encode(batch["pixel_values"].to(dtype=weight_dtype)).latent_dist.sample()
@@ -1276,9 +1296,7 @@ def main():
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
-                if global_step == 0:
-                    print(f'sg embed shape: {batch["sg_embeds"].shape}')
-                    print(f'STEP: {global_step}')
+
                 # if step > 40:
                 #     print(f'PROMPT: {batch["prompt"]}')
                 #     print(f'TRIPLETS: {batch["triplets"]}')
