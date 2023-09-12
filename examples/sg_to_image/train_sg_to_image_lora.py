@@ -318,7 +318,7 @@ def parse_args():
     parser.add_argument(
         "--snr_gamma",
         type=float,
-        default=5.0,
+        default=None,
         help="SNR weighting gamma to be used if rebalancing the loss. Recommended value is 5.0. "
              "More details here: https://arxiv.org/abs/2303.09556.",
     )
