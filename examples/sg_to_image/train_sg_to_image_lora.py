@@ -60,6 +60,9 @@ logger = get_logger(__name__, log_level="INFO")
 
 datasets.config.IN_MEMORY_MAX_SIZE = 3_000_000_000
 
+vg_configs = {'vocab': '/mnt/datasets/visual_genome/vocab.json', 'h5_path': '/mnt/datasets/visual_genome/test.h5',
+              'image_dir': '/mnt/datasets/visual_genome/images'}
+
 
 def save_model_card(repo_id: str, images=None, base_model=str, dataset_name=str, repo_folder=None):
     img_str = ""
@@ -788,13 +791,18 @@ def main():
     # In distributed training, the load_dataset function guarantees that only one local process can concurrently
     # download the dataset.
     if args.dataset_name is not None:
-        # Downloading and loading a dataset from the hub.
-        dataset = load_dataset(
-            args.dataset_name,
-            args.dataset_config_name,
-            cache_dir=args.cache_dir,
-            keep_in_memory=True
-        )
+        if 'clevr' in args.dataset_name:
+            # Downloading and loading a dataset from the hub.
+            dataset = load_dataset(
+                args.dataset_name,
+                args.dataset_config_name,
+                cache_dir=args.cache_dir,
+                keep_in_memory=True
+            )
+        elif 'vg' in args.dataset_name:
+            from simsg import VGDatabase, vg_collate_fn
+            dataset = VGDatabase(**vg_configs)
+
     else:
         data_files = {}
         if args.train_data_dir is not None:
@@ -1172,7 +1180,8 @@ def main():
 
         # save the generator if it improved
         if metric_greater_cmp(metrics[leading_metric], last_best_metric):
-            logger.info(f'Leading metric {args.leading_metric} improved from {last_best_metric} to {metrics[leading_metric]}')
+            logger.info(
+                f'Leading metric {args.leading_metric} improved from {last_best_metric} to {metrics[leading_metric]}')
             last_best_metric = metrics[leading_metric]
 
         # save the generator if it improved
@@ -1278,7 +1287,6 @@ def main():
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
-
 
                 if args.cond_place == 'latent':
                     noisy_latents = torch.cat([noisy_latents, batch['sg_embeds']], dim=1)
