@@ -849,10 +849,6 @@ def main():
             )
 
     def prepare_sg_embeds(examples, is_train=True):
-        print(
-            f'Preparing SG embeddings LEN objects={len(examples[objects_column])} during {"training" if is_train else "validation"}')
-        print(f'{examples[objects_column]}')
-        print('-------------------')
         max_length = (8, 21)
         sg_embeds = []
         for triplets, boxes, objects in zip(examples[triplets_column], examples[boxes_column],
@@ -902,12 +898,6 @@ def main():
     # Preprocessing the datasets.
     # We need to tokenize input captions and transform the images.
     def tokenize_captions(examples, is_train=True):
-        print(f'Preparing captions during {"train" if is_train else "eval"}')
-        print(examples[caption_column])
-        print('-----0th------')
-        print(examples[caption_column][0])
-        print('--------------')
-
         if args.caption_type == 'none':
             return torch.zeros((len(examples[caption_column]), 77), device=accelerator.device)
         captions = []
@@ -1024,8 +1014,6 @@ def main():
     def handle_hidden_states(input_ids=None, condition=None):
         if args.caption_type != 'none':
             encoder_hidden_states = text_encoder(input_ids)[0]
-            # print(f'encoder_hidden_states shape: {encoder_hidden_states.shape}')
-            # print(f'condition shape: {encoder_hidden_states.shape}')
         if args.cond_place == 'attn':
             if args.caption_type != 'none':
                 prompt_embeds = torch.cat((encoder_hidden_states, condition), dim=1)
@@ -1070,8 +1058,6 @@ def main():
         # run inference
         generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
         generated_images = []
-
-        # print(f'***VAL*** sg embed shape: {val_sample["sg_embeds"].shape}') if epoch == 0 else None
 
         for _ in range(args.num_validation_images):
             generated_images.append(
@@ -1137,7 +1123,6 @@ def main():
         for input_ids, sg_embeds in zip(val_dset['input_ids'], val_dset['sg_embeds']):
             input_ids = input_ids.unsqueeze(0).to(accelerator.device)
             sg_embeds = sg_embeds.unsqueeze(0).to(accelerator.device)
-            # print(f'***VAL*** sg embed shape: {sg_embeds.shape}') if global_step == 0 else None
 
             images.append(pipeline(prompt_embeds=handle_hidden_states(input_ids=input_ids, condition=sg_embeds),
                                    height=args.resolution, width=args.resolution, num_inference_steps=30,
@@ -1151,21 +1136,12 @@ def main():
         all_boxes_gt = val_dset['boxes']
         all_objects_gt = val_dset['objects']
         for i in range(len(images)):
-            if i == 0:
-                print(f'***EVAL*** boxes shape [{args.num_eval_images}] : {len(all_boxes_gt)}')
-                print(f'***EVAL*** objects shape [{args.num_eval_images}]: {len(all_objects_gt)}')
-
             boxes_gt = all_boxes_gt[i][:-1]
-            if i == 0:
-                print(f'***EVAL*** boxes_gt shape [b,4] : {boxes_gt.shape}')
             boxes_gt = boxes_gt * torch.tensor([320, 240, 320, 240]).to(accelerator.device) - torch.tensor(
                 [40, 0, 40, 0]).to(accelerator.device)
             boxes_gt = boxes_gt.clip(0, 240) / 240
 
             objects_gt = all_objects_gt[i][:-1]
-            if global_step == 0:
-                print(f'Objects gt: {objects_gt}')
-                print(f'Boxes gt: {boxes_gt}')
             ap_box, ap_obj, num_objs = object_detection_metrics.calculate(images[i], boxes_gt, objects_gt)
             box_aps += ap_box
             obj_aps += ap_obj
@@ -1196,12 +1172,12 @@ def main():
 
         # save the generator if it improved
         if metric_greater_cmp(metrics[leading_metric], last_best_metric):
-            print(f'Leading metric {args.leading_metric} improved from {last_best_metric} to {metrics[leading_metric]}')
+            logger.info(f'Leading metric {args.leading_metric} improved from {last_best_metric} to {metrics[leading_metric]}')
             last_best_metric = metrics[leading_metric]
 
         # save the generator if it improved
         if metric_greater_cmp(metrics[isc_metric], last_best_isc):
-            print(
+            logger.info(
                 f'Leading metric IS improved from {last_best_isc} to {metrics[isc_metric]}')
             last_best_isc = metrics[isc_metric]
 
@@ -1276,9 +1252,9 @@ def main():
                 continue
 
             if step == 0:
-                print(f'sg embed shape: {batch["sg_embeds"].shape}')
-                print(f'triplets: {batch["triplets"]}')
-                print(f'STEP: {step}')
+                logger.info(f'STEP: {step}')
+                logger.info(f'sg embed shape: {batch["sg_embeds"].shape}')
+                logger.info(f'triplets: {batch["triplets"]}')
 
             with accelerator.accumulate(unet):
                 # Convert images to latent space
@@ -1303,10 +1279,6 @@ def main():
                 # (this is the forward diffusion process)
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-                # if step > 40:
-                #     print(f'PROMPT: {batch["prompt"]}')
-                #     print(f'TRIPLETS: {batch["triplets"]}')
-                #     print(f'BOXES: {batch["boxes"]}')
 
                 if args.cond_place == 'latent':
                     noisy_latents = torch.cat([noisy_latents, batch['sg_embeds']], dim=1)
@@ -1380,7 +1352,7 @@ def main():
             if not train_lora and global_step + 1 >= args.start_lora:
                 train_lora = True
                 unet.train()
-                print('starting lora training')
+                logger.info('Starting LoRA training...')
                 lora_layers, optimizer_lora, lr_scheduler_lora = set_lora_layers()
                 lora_layers, optimizer_lora, lr_scheduler_lora = accelerator.prepare(lora_layers, optimizer_lora,
                                                                                      lr_scheduler_lora)
