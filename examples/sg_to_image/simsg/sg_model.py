@@ -138,13 +138,12 @@ class SGModel(nn.Module):
         - sg_vec: FloatTensor of shape (sum(max_length), 256) giving a vector representation of the scene graph
         """
         # Compute the text embedding for each object and predicate
-
+        assert objects.device == triples.device
         s, p, o = triples.chunk(3, dim=1)  # All have shape (num_triples, 1)
         s, p, o = [x.squeeze(1) for x in [s, p, o]]  # Now have shape (num_triples,)
         edges = torch.stack([s, o], dim=1)  # Shape is (num_triples, 2)
 
-        # convert objects to torch tensor
-        objs = torch.tensor(objects, dtype=torch.long, device=triples.device)
+        objs = objects
         # print(f'objs shape: {objs.shape}')
         # print(f'pred shape: {p.shape}')
 
