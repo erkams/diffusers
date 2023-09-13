@@ -1,6 +1,8 @@
 import argparse
 from datetime import datetime
 import json
+
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from tqdm import tqdm
 import os
 
@@ -135,10 +137,10 @@ def parse_args():
     parser.add_argument(
         "--lr_scheduler",
         type=str,
-        default="constant",
+        default="plateau",
         help=(
             'The scheduler type to use. Choose between ["linear", "cosine", "cosine_with_restarts", "polynomial",'
-            ' "constant", "constant_with_warmup"]'
+            ' "constant", "constant_with_warmup", "plateau"].'
         ),
     )
     parser.add_argument(
@@ -261,13 +263,15 @@ def main():
                            weight_decay=0.2)
 
     train_dataloader, val_dataloader = build_dataloader(args, device=device)
-
-    lr_scheduler = get_scheduler(
-        args.lr_scheduler,
-        optimizer=optimizer,
-        num_warmup_steps=args.lr_warmup_steps,
-        num_training_steps=len(train_dataloader) * args.num_train_epochs,
-    )
+    if args.lr_scheduler != 'plateau':
+        lr_scheduler = get_scheduler(
+            args.lr_scheduler,
+            optimizer=optimizer,
+            num_warmup_steps=args.lr_warmup_steps,
+            num_training_steps=len(train_dataloader) * args.num_train_epochs,
+        )
+    else:
+        lr_scheduler = ReduceLROnPlateau(optimizer, 'min', factor=0.3, verbose=True)
     global_step = 0
     min_loss = 100000
     for epoch in range(args.num_train_epochs):
@@ -292,7 +296,7 @@ def main():
 
             run.log({"step_loss": total_loss.item(), "lr": lr_scheduler.get_last_lr()[0]}, step=global_step)
             optimizer.step()
-            lr_scheduler.step()
+
             global_step += 1
             train_loss += total_loss.item()
 
@@ -313,15 +317,17 @@ def main():
                     ground_truth = torch.arange(len(latent), dtype=torch.long, device=device)
 
                     total_loss = (loss_img(logit_img, ground_truth) + loss_sg(logit_sg, ground_truth)) / 2
-                    val_loss += total_loss.item()
+                    val_loss += total_loss.item() / len(val_dataloader)
 
-                run.log({"val_loss": val_loss / len(val_dataloader)}, step=global_step)
-                if val_loss / len(val_dataloader) < min_loss:
-                    print(f'Min loss improved from {min_loss} to {val_loss / len(val_dataloader)}')
-                    min_loss = val_loss / len(val_dataloader)
+                run.log({"val_loss": val_loss}, step=global_step)
+                if val_loss < min_loss:
+                    print(f'Min loss improved from {min_loss} to {val_loss}')
+                    min_loss = val_loss
                     torch.save(model.state_dict(), f'./model/sg_encoder_best_{train_id}.pt')
 
             model.train()
+
+        lr_scheduler.step(val_loss)
 
         if epoch % 10 == 0:
             # save the file with date identifier
