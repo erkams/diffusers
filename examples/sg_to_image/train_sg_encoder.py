@@ -221,7 +221,6 @@ def main():
             latent = batch[DEPTH_LATENT]
 
             logit_img, logit_sg = model(triplets, objects, latent=latent)
-            print(f'logit_img: {logit_img}')
             ground_truth = torch.arange(len(latent), dtype=torch.long, device=device)
 
             # calculate box loss with MSE

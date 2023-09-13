@@ -166,8 +166,6 @@ class SGNet(nn.Module):
         # normalized features
         image_features = image_features / image_features.norm(dim=1, keepdim=True)
         graph_features = graph_features / graph_features.norm(dim=1, keepdim=True)
-        print(image_features.shape)
-        print(graph_features.shape)
         # cosine similarity as logits
         logit_scale = self.logit_scale.exp()
         logits_per_image = logit_scale * image_features @ graph_features.t()
