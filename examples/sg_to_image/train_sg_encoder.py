@@ -259,7 +259,7 @@ def main():
 
     loss_img = nn.CrossEntropyLoss()
     loss_sg = nn.CrossEntropyLoss()
-    l1_criterion = nn.L1Loss()
+
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate, betas=(0.9, 0.98), eps=1e-6,
                            weight_decay=0.2)
 
@@ -278,7 +278,6 @@ def main():
     min_loss = 100000
     for epoch in range(args.num_train_epochs):
         train_loss = 0
-        l1_loss_per_epoch = 0
         for step, batch in enumerate(tqdm(train_dataloader)):
             optimizer.zero_grad()
             # imgs = batch['image']
@@ -294,28 +293,16 @@ def main():
             # box_loss = torch.nn.MSELoss()
             # box_loss = box_loss(box_pred, boxes)
 
-            ce_loss = (loss_img(logit_img, ground_truth) + loss_sg(logit_sg, ground_truth)) / 2
-            l1_gt = torch.diag(torch.ones(len(latent), device=device, dtype=torch.float))
-            l1_loss = (l1_criterion(l1_gt, logit_img)+l1_criterion(l1_gt, logit_sg))/2
-            total_loss = ce_loss + 0.1 * l1_loss
+            total_loss = (loss_img(logit_img, ground_truth) + loss_sg(logit_sg, ground_truth)) / 2
             total_loss.backward()
 
-            run.log({"step_loss": total_loss.item(),
-                     "l1_step_loss": l1_loss.item(),
-                     "ce_step_loss": ce_loss.item(),
-                     "lr": optimizer.param_groups[0]['lr']
-                     },
-                    step=global_step)
+            run.log({"step_loss": total_loss.item(), "lr": optimizer.param_groups[0]['lr']}, step=global_step)
             optimizer.step()
 
             global_step += 1
             train_loss += total_loss.item() / len(train_dataloader)
-            l1_loss_per_epoch += l1_loss.item() / len(train_dataloader)
 
-        run.log({"train_loss": train_loss,
-                 "l1_loss": l1_loss_per_epoch
-                 },
-                step=global_step)
+        run.log({"train_loss": train_loss}, step=global_step)
 
         if epoch % args.validation_epochs == 0:
             model.eval()
@@ -343,7 +330,9 @@ def main():
             model.train()
 
         if args.lr_scheduler == 'plateau':
-            lr_scheduler.step(train_loss / len(train_dataloader))
+            lr_scheduler.step(train_loss)
+        elif lr_scheduler is not None:
+            lr_scheduler.step()
 
         if epoch % 10 == 0:
             # save the file with date identifier
