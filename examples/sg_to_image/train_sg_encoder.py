@@ -1,4 +1,5 @@
 import argparse
+import datetime
 import json
 from tqdm import tqdm
 import os
@@ -159,6 +160,7 @@ def build_model(args, device=None):
 
     return sg_net
 
+
 def build_dataloader(args, device=None):
     if 'clevr' in args.dataset_name:
         # Downloading and loading a dataset from the hub.
@@ -190,13 +192,13 @@ def build_dataloader(args, device=None):
         depth_latent = torch.stack([example[DEPTH_LATENT] for example in examples])
         image_latent = torch.stack([example[IMAGE_LATENT] for example in examples])
         return {
-                # "pixel_values": pixel_values,
-                TRIPLETS: triplets,
-                BOXES: boxes,
-                OBJECTS: objects,
-                DEPTH_LATENT: depth_latent,
-                IMAGE_LATENT: image_latent
-                }
+            # "pixel_values": pixel_values,
+            TRIPLETS: triplets,
+            BOXES: boxes,
+            OBJECTS: objects,
+            DEPTH_LATENT: depth_latent,
+            IMAGE_LATENT: image_latent
+        }
 
     def preprocess_train(examples):
         # images = [image.convert("RGB") for image in examples[IMAGE]]
@@ -241,6 +243,7 @@ def build_dataloader(args, device=None):
 def main():
     args = parse_args()
     print(args)
+    train_id = datetime.now().strftime("%Y%m%d-%H%M%S")
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     run = wandb.init(
@@ -316,14 +319,13 @@ def main():
                 if val_loss / len(val_dataloader) < min_loss:
                     print(f'Min loss improved from {min_loss} to {val_loss / len(val_dataloader)}')
                     min_loss = val_loss / len(val_dataloader)
-                    torch.save(model.state_dict(), f'./model/sg_encoder_best.pt')
+                    torch.save(model.state_dict(), f'./model/sg_encoder_best_{train_id}.pt')
 
             model.train()
 
-
-
         if epoch % 10 == 0:
-            torch.save(model.state_dict(), f'./model/sg_encoder_{epoch}.pt')
+            # save the file with date identifier
+            torch.save(model.state_dict(), f'./model/sg_encoder_{epoch}_{train_id}.pt')
 
 
 if __name__ == '__main__':
