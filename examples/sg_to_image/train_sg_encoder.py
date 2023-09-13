@@ -99,6 +99,24 @@ def parse_args():
         ),
     )
     parser.add_argument(
+        "--max_val_samples",
+        type=int,
+        default=100,
+        help=(
+            "For debugging purposes or quicker training, truncate the number of training examples to this "
+            "value if set."
+        ),
+    )
+    parser.add_argument(
+        "--validation_epochs",
+        type=int,
+        default=1,
+        help=(
+            "Run fine-tuning validation every X epochs. The validation process consists of running the prompt"
+            " `args.validation_prompt` multiple times: `args.num_validation_images`."
+        ),
+    )
+    parser.add_argument(
         "--dataloader_num_workers",
         type=int,
         default=0,
@@ -163,15 +181,15 @@ def build_dataloader(args, device=None):
     )
 
     def collate_fn(examples):
-
-        pixel_values = torch.stack([example["pixel_values"] for example in examples])
-        pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
+        # pixel_values = torch.stack([example["pixel_values"] for example in examples])
+        # pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
         triplets = [example[TRIPLETS] for example in examples]
         objects = [example[OBJECTS] for example in examples]
         boxes = [example[BOXES] for example in examples]
         depth_latent = torch.stack([example[DEPTH_LATENT] for example in examples])
         image_latent = torch.stack([example[IMAGE_LATENT] for example in examples])
-        return {"pixel_values": pixel_values,
+        return {
+                # "pixel_values": pixel_values,
                 TRIPLETS: triplets,
                 BOXES: boxes,
                 OBJECTS: objects,
@@ -180,7 +198,7 @@ def build_dataloader(args, device=None):
                 }
 
     def preprocess_train(examples):
-        images = [image.convert("RGB") for image in examples[IMAGE]]
+        # images = [image.convert("RGB") for image in examples[IMAGE]]
         examples[TRIPLETS] = [torch.tensor(triplets, device=device, dtype=torch.long) for triplets in
                               examples[TRIPLETS]]
         examples[BOXES] = [boxes for boxes in examples[BOXES]]
@@ -190,13 +208,15 @@ def build_dataloader(args, device=None):
                                   examples[DEPTH_LATENT]]
         examples[IMAGE_LATENT] = [torch.tensor(image_latent, device=device, dtype=torch.float) for image_latent in
                                   examples[IMAGE_LATENT]]
-        examples["pixel_values"] = [train_transforms(image) for image in images]
+        # examples["pixel_values"] = [train_transforms(image) for image in images]
         return examples
 
     if args.max_train_samples is not None:
         dataset["train"] = dataset["train"].shuffle(seed=args.seed).select(range(args.max_train_samples))
+        dataset["val"] = dataset["val"].shuffle(seed=args.seed).select(range(args.max_val_samples))
 
     train_dataset = dataset["train"].with_transform(preprocess_train)
+    val_dataset = dataset["val"].with_transform(preprocess_train)
     # DataLoaders creation:
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
@@ -205,7 +225,16 @@ def build_dataloader(args, device=None):
         batch_size=args.train_batch_size,
         num_workers=args.dataloader_num_workers,
     )
-    return train_dataloader
+
+    val_dataloader = torch.utils.data.DataLoader(
+        val_dataset,
+        shuffle=False,
+        collate_fn=collate_fn,
+        batch_size=args.train_batch_size,
+        num_workers=args.dataloader_num_workers,
+    )
+
+    return train_dataloader, val_dataloader
 
 
 def main():
@@ -227,7 +256,7 @@ def main():
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate, betas=(0.9, 0.98), eps=1e-6,
                            weight_decay=0.2)
 
-    train_dataloader = build_dataloader(args, device=device)
+    train_dataloader, val_dataloader = build_dataloader(args, device=device)
 
     lr_scheduler = get_scheduler(
         args.lr_scheduler,
@@ -235,17 +264,17 @@ def main():
         num_warmup_steps=args.lr_warmup_steps,
         num_training_steps=len(train_dataloader) * args.num_train_epochs,
     )
-
+    global_step = 0
     for epoch in range(args.num_train_epochs):
-        optimizer.zero_grad()
-        step_losses = []
-        cos_sim = 0.0
+        train_loss = 0
+        min_loss = 100000
         for step, batch in enumerate(tqdm(train_dataloader)):
+            optimizer.zero_grad()
             # imgs = batch['image']
             # boxes = batch[BOXES]
             triplets = batch[TRIPLETS]
             objects = batch[OBJECTS]
-            latent = batch[DEPTH_LATENT]
+            latent = batch[IMAGE_LATENT]
 
             logit_img, logit_sg = model(triplets, objects, latent=latent)
             ground_truth = torch.arange(len(latent), dtype=torch.long, device=device)
@@ -256,11 +285,42 @@ def main():
 
             total_loss = (loss_img(logit_img, ground_truth) + loss_sg(logit_sg, ground_truth)) / 2
             total_loss.backward()
-            step_losses.append(total_loss.item())
+
+            run.log({"step_loss": total_loss.item(), "lr": lr_scheduler.get_last_lr()}, step=global_step)
             optimizer.step()
             lr_scheduler.step()
+            global_step += 1
+            train_loss += total_loss.item()
 
-        wandb.log({"train_loss": np.mean(step_losses)})
+        if epoch % args.validation_epochs == 0:
+            model.eval()
+            with torch.no_grad():
+                val_loss = 0
+                for step, batch in enumerate(tqdm(val_dataloader)):
+                    # imgs = batch['image']
+                    # boxes = batch[BOXES]
+                    triplets = batch[TRIPLETS]
+                    objects = batch[OBJECTS]
+                    latent = batch[IMAGE_LATENT]
+
+                    logit_img, logit_sg = model(triplets, objects, latent=latent)
+                    ground_truth = torch.arange(len(latent), dtype=torch.long, device=device)
+
+                    total_loss = (loss_img(logit_img, ground_truth) + loss_sg(logit_sg, ground_truth)) / 2
+                    val_loss += total_loss.item()
+
+                run.log({"val_loss": val_loss / len(val_dataloader)}, step=global_step)
+                if val_loss / len(val_dataloader) < min_loss:
+                    print(f'Min loss improved from {min_loss} to {val_loss / len(val_dataloader)}')
+                    min_loss = val_loss / len(val_dataloader)
+                    torch.save(model.state_dict(), f'./model/sg_encoder_best.pt')
+
+            model.train()
+
+        run.log({"train_loss": train_loss / len(train_dataloader)}, step=global_step)
+
+        if epoch % 10 == 0:
+            torch.save(model.state_dict(), f'./model/sg_encoder_{epoch}.pt')
 
 
 if __name__ == '__main__':
