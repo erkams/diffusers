@@ -1,5 +1,5 @@
 import argparse
-import datetime
+from datetime import datetime
 import json
 from tqdm import tqdm
 import os
