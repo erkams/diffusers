@@ -137,7 +137,7 @@ def parse_args():
     parser.add_argument(
         "--lr_scheduler",
         type=str,
-        default="plateau",
+        default=None,
         help=(
             'The scheduler type to use. Choose between ["linear", "cosine", "cosine_with_restarts", "polynomial",'
             ' "constant", "constant_with_warmup", "plateau"].'
@@ -264,15 +264,17 @@ def main():
                            weight_decay=0.2)
 
     train_dataloader, val_dataloader = build_dataloader(args, device=device)
-    if args.lr_scheduler != 'plateau':
+    if args.lr_scheduler is not None and args.lr_scheduler != 'plateau':
         lr_scheduler = get_scheduler(
             args.lr_scheduler,
             optimizer=optimizer,
             num_warmup_steps=args.lr_warmup_steps,
             num_training_steps=len(train_dataloader) * args.num_train_epochs,
         )
-    else:
+    elif args.lr_scheduler == 'plateau':
         lr_scheduler = ReduceLROnPlateau(optimizer, 'min', factor=0.3, verbose=True)
+    else:
+        lr_scheduler = None
 
     global_step = 0
     min_loss = 100000
@@ -331,7 +333,7 @@ def main():
 
         if args.lr_scheduler == 'plateau':
             lr_scheduler.step(val_loss)
-        elif lr_scheduler is not None:
+        elif args.lr_scheduler is not None:
             lr_scheduler.step()
 
         if epoch % 10 == 0:
