@@ -151,7 +151,7 @@ class SGNet(nn.Module):
         image_features = []
         graph_features = []
         for i in range(len(latent)):
-            i, g = self._forward(triplets, objects, image, latent, boxes, depth)
+            i, g = self._forward(triplets[i], objects[i], image, latent[i], boxes, depth)
             image_features.append(i)
             graph_features.append(g)
         image_features = torch.stack(image_features, dim=0)
