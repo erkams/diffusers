@@ -266,9 +266,9 @@ def main():
         num_training_steps=len(train_dataloader) * args.num_train_epochs,
     )
     global_step = 0
+    min_loss = 100000
     for epoch in range(args.num_train_epochs):
         train_loss = 0
-        min_loss = 100000
         for step, batch in enumerate(tqdm(train_dataloader)):
             optimizer.zero_grad()
             # imgs = batch['image']
@@ -292,6 +292,8 @@ def main():
             lr_scheduler.step()
             global_step += 1
             train_loss += total_loss.item()
+
+        run.log({"train_loss": train_loss / len(train_dataloader)}, step=global_step)
 
         if epoch % args.validation_epochs == 0:
             model.eval()
@@ -318,7 +320,7 @@ def main():
 
             model.train()
 
-        run.log({"train_loss": train_loss / len(train_dataloader)}, step=global_step)
+
 
         if epoch % 10 == 0:
             torch.save(model.state_dict(), f'./model/sg_encoder_{epoch}.pt')
