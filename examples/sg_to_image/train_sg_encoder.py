@@ -226,13 +226,15 @@ def main():
     loss_sg = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate, betas=(0.9, 0.98), eps=1e-6,
                            weight_decay=0.2)
+
+    train_dataloader = build_dataloader(args, device=device)
+
     lr_scheduler = get_scheduler(
         args.lr_scheduler,
         optimizer=optimizer,
         num_warmup_steps=args.lr_warmup_steps,
-        num_training_steps=args.max_train_steps,
+        num_training_steps=len(train_dataloader) * args.num_train_epochs,
     )
-    train_dataloader = build_dataloader(args, device=device)
 
     for epoch in range(args.num_train_epochs):
         optimizer.zero_grad()
