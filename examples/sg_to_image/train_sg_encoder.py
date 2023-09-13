@@ -143,17 +143,18 @@ def build_dataloader(args, device=None):
     )
 
     def collate_fn(examples):
+
         pixel_values = torch.stack([example["pixel_values"] for example in examples])
         pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
-        # triplets = torch.stack([example[TRIPLETS] for example in examples])
-        # objects = torch.stack([example[OBJECTS] for example in examples])
-        # boxes = torch.stack([example[BOXES] for example in examples])
-        depth_latent = torch.stack(examples[DEPTH_LATENT])
-        image_latent = torch.stack(examples[IMAGE_LATENT])
+        triplets = [example[TRIPLETS] for example in examples]
+        objects = [example[OBJECTS] for example in examples]
+        boxes = [example[BOXES] for example in examples]
+        depth_latent = torch.stack([example[DEPTH_LATENT] for example in examples])
+        image_latent = torch.stack([example[IMAGE_LATENT] for example in examples])
         return {"pixel_values": pixel_values,
-                TRIPLETS: examples[TRIPLETS],
-                BOXES: examples[BOXES],
-                OBJECTS: examples[OBJECTS],
+                TRIPLETS: triplets,
+                BOXES: boxes,
+                OBJECTS: objects,
                 DEPTH_LATENT: depth_latent,
                 IMAGE_LATENT: image_latent
                 }
