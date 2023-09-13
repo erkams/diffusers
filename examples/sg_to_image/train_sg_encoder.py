@@ -330,7 +330,7 @@ def main():
             model.train()
 
         if args.lr_scheduler == 'plateau':
-            lr_scheduler.step(train_loss)
+            lr_scheduler.step(val_loss)
         elif lr_scheduler is not None:
             lr_scheduler.step()
 
