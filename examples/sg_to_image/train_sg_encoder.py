@@ -1,6 +1,7 @@
 import argparse
 import json
 from tqdm import tqdm
+import os
 
 import wandb
 
@@ -324,4 +325,5 @@ def main():
 
 
 if __name__ == '__main__':
+    os.makedirs('./model', exist_ok=True)
     main()
