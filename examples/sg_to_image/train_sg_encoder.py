@@ -104,6 +104,12 @@ def parse_args():
             "Number of subprocesses to use for data loading. 0 means that the data will be loaded in the main process."
         ),
     )
+    parser.add_argument(
+        "--learning_rate",
+        type=float,
+        default=1e-4,
+        help="Initial learning rate (after the potential warmup period) to use.",
+    )
     parser.add_argument("--num_train_epochs", type=int, default=100)
     parser.add_argument("--vocab_json", type=str, default="./vocab.json", help="The path to the vocab file.")
 
@@ -204,7 +210,7 @@ def main():
 
     loss_img = nn.CrossEntropyLoss()
     loss_sg = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=2e-4, betas=(0.9, 0.98), eps=1e-6,
+    optimizer = optim.Adam(model.parameters(), lr=args.learning_rate, betas=(0.9, 0.98), eps=1e-6,
                            weight_decay=0.2)
 
     train_dataloader = build_dataloader(args, device=device)
