@@ -96,6 +96,14 @@ def parse_args():
             "value if set."
         ),
     )
+    parser.add_argument(
+        "--dataloader_num_workers",
+        type=int,
+        default=0,
+        help=(
+            "Number of subprocesses to use for data loading. 0 means that the data will be loaded in the main process."
+        ),
+    )
     parser.add_argument("--num_train_epochs", type=int, default=100)
     parser.add_argument("--vocab_json", type=str, default="./vocab.json", help="The path to the vocab file.")
 
