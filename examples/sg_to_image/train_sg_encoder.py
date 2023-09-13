@@ -10,6 +10,8 @@ from torch import nn, optim
 import datasets
 from datasets import load_dataset
 from torchvision import transforms
+
+from diffusers import get_scheduler
 from simsg import SGNet
 import numpy as np
 
@@ -109,6 +111,18 @@ def parse_args():
         type=float,
         default=1e-4,
         help="Initial learning rate (after the potential warmup period) to use.",
+    )
+    parser.add_argument(
+        "--lr_scheduler",
+        type=str,
+        default="constant",
+        help=(
+            'The scheduler type to use. Choose between ["linear", "cosine", "cosine_with_restarts", "polynomial",'
+            ' "constant", "constant_with_warmup"]'
+        ),
+    )
+    parser.add_argument(
+        "--lr_warmup_steps", type=int, default=500, help="Number of steps for the warmup in the lr scheduler."
     )
     parser.add_argument("--num_train_epochs", type=int, default=100)
     parser.add_argument("--vocab_json", type=str, default="./vocab.json", help="The path to the vocab file.")
@@ -212,7 +226,12 @@ def main():
     loss_sg = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate, betas=(0.9, 0.98), eps=1e-6,
                            weight_decay=0.2)
-
+    lr_scheduler = get_scheduler(
+        args.lr_scheduler,
+        optimizer=optimizer,
+        num_warmup_steps=args.lr_warmup_steps,
+        num_training_steps=args.max_train_steps,
+    )
     train_dataloader = build_dataloader(args, device=device)
 
     for epoch in range(args.num_train_epochs):
@@ -237,6 +256,7 @@ def main():
             total_loss.backward()
             step_losses.append(total_loss.item())
             optimizer.step()
+            lr_scheduler.step()
 
         wandb.log({"train_loss": np.mean(step_losses)})
 
