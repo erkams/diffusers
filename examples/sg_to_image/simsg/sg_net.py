@@ -100,6 +100,9 @@ class SGNet(nn.Module):
         self.graph_projection2 = nn.Parameter(torch.randn(1, self.max_obj))
         nn.init.normal_(self.graph_projection2, std=self.max_obj ** -0.5)
 
+        self.image_projection = nn.Parameter(torch.randn(1, 4))
+        nn.init.normal_(self.graph_projection2, std=4 ** -0.5)
+
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
         # box_net_dim = 4
@@ -184,6 +187,7 @@ class SGNet(nn.Module):
     def _forward(self, triplets, objects, image=None, latent=None, boxes=None, depth=None):
         if latent is not None:
             image_features = torch.flatten(latent, start_dim=-2)
+            image_features = self.image_projection @ image_features
             assert image_features.shape[-1] == self.embed_dim
         else:
             raise NotImplementedError
