@@ -59,6 +59,7 @@ class SGNet(nn.Module):
 
         self.num_objs = len(vocab['object_idx_to_name'])
         self.num_preds = len(vocab['pred_idx_to_name'])
+        self.max_obj = 8
 
         if use_box:
             obj_embed_dim = embed_dim + 4
@@ -96,8 +97,8 @@ class SGNet(nn.Module):
         self.graph_projection = nn.Linear(embed_dim, embed_dim)
         self.graph_projection.apply(_init_weights)
 
-        self.graph_projection2 = nn.Parameter(torch.randn(self.num_objs + 1, 1))
-        nn.init.normal_(self.graph_projection2, std=(self.num_objs + 1) ** -0.5)
+        self.graph_projection2 = nn.Parameter(torch.randn(1, self.max_obj))
+        nn.init.normal_(self.graph_projection2, std=self.max_obj ** -0.5)
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
@@ -138,7 +139,7 @@ class SGNet(nn.Module):
         # if self.identity:
         #     obj_vecs = obj_vecs + obj_vecs_
 
-        obj_vecs = F.pad(obj_vecs, pad=(0, 0, self.num_objs + 1 - obj_vecs.size(0), 0))
+        obj_vecs = F.pad(obj_vecs, pad=(0, 0, self.max_obj - obj_vecs.size(0), 0))
 
         return obj_vecs
 
