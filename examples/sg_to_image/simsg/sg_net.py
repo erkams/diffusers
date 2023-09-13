@@ -88,14 +88,14 @@ class SGNet(nn.Module):
             self.pred_embeddings = nn.Embedding(self.num_preds, embed_dim)
 
         self.gconv = GraphTripleConv(obj_embed_dim, self.embed_dim, output_dim=embed_dim, hidden_dim=hidden_dim,
-                                          pooling='avg',
-                                          mlp_normalization='none')
+                                     pooling='avg',
+                                     mlp_normalization='none')
         self.gconv_net = GraphTripleConvNet(obj_embed_dim, self.embed_dim, num_layers=layers, hidden_dim=hidden_dim,
                                             pooling='avg',
                                             mlp_normalization='none')
 
-        self.graph_projection = nn.Linear(embed_dim, embed_dim)
-        self.graph_projection.apply(_init_weights)
+        # self.graph_projection = nn.Linear(embed_dim, embed_dim)
+        # self.graph_projection.apply(_init_weights)
 
         self.graph_projection2 = nn.Parameter(torch.randn(1, self.max_obj))
         nn.init.normal_(self.graph_projection2, std=self.max_obj ** -0.5)
@@ -192,9 +192,9 @@ class SGNet(nn.Module):
 
         # image_features = self.encode_image(image)
 
-        graph_embed = self.encode_sg(triplets, objects, boxes)
+        graph_features = self.encode_sg(triplets, objects, boxes)
 
-        graph_features = self.graph_projection(graph_embed)
+        # graph_features = self.graph_projection(graph_embed)
 
         graph_features = self.graph_projection2 @ graph_features
 
