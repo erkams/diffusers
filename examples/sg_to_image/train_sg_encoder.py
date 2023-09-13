@@ -272,6 +272,7 @@ def main():
         )
     else:
         lr_scheduler = ReduceLROnPlateau(optimizer, 'min', factor=0.3, verbose=True)
+
     global_step = 0
     min_loss = 100000
     for epoch in range(args.num_train_epochs):
@@ -294,7 +295,7 @@ def main():
             total_loss = (loss_img(logit_img, ground_truth) + loss_sg(logit_sg, ground_truth)) / 2
             total_loss.backward()
 
-            run.log({"step_loss": total_loss.item(), "lr": lr_scheduler.get_last_lr()[0]}, step=global_step)
+            run.log({"step_loss": total_loss.item(), "lr": optimizer.param_groups[0]['lr']}, step=global_step)
             optimizer.step()
 
             global_step += 1
