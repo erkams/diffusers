@@ -287,7 +287,7 @@ def main():
             total_loss = (loss_img(logit_img, ground_truth) + loss_sg(logit_sg, ground_truth)) / 2
             total_loss.backward()
 
-            run.log({"step_loss": total_loss.item(), "lr": lr_scheduler.get_last_lr()}, step=global_step)
+            run.log({"step_loss": total_loss.item(), "lr": lr_scheduler.get_last_lr()[0]}, step=global_step)
             optimizer.step()
             lr_scheduler.step()
             global_step += 1
