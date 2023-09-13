@@ -86,10 +86,10 @@ class SGNet(nn.Module):
             self.obj_embeddings = nn.Embedding(self.num_objs + 1, embed_dim)
             self.pred_embeddings = nn.Embedding(self.num_preds, embed_dim)
 
-        self.graph_conv = GraphTripleConv(obj_embed_dim, self.embed_dim, output_dim=embed_dim, hidden_dim=hidden_dim,
+        self.gconv = GraphTripleConv(obj_embed_dim, self.embed_dim, output_dim=embed_dim, hidden_dim=hidden_dim,
                                           pooling='avg',
                                           mlp_normalization='none')
-        self.graph_net = GraphTripleConvNet(obj_embed_dim, self.embed_dim, num_layers=layers, hidden_dim=hidden_dim,
+        self.gconv_net = GraphTripleConvNet(obj_embed_dim, self.embed_dim, num_layers=layers, hidden_dim=hidden_dim,
                                             pooling='avg',
                                             mlp_normalization='none')
 
