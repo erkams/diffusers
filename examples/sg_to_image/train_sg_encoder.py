@@ -148,7 +148,14 @@ def parse_args():
     )
     parser.add_argument("--num_train_epochs", type=int, default=100)
     parser.add_argument("--vocab_json", type=str, default="./vocab.json", help="The path to the vocab file.")
-
+    parser.add_argument(
+        "--latent_type",
+        type=str,
+        default='image',
+        help=(
+            'The latent type to use. Choose between ["image", "depth"].'
+        ),
+    )
     args = parser.parse_args()
     return args
 
@@ -278,6 +285,7 @@ def main():
 
     global_step = 0
     min_loss = 100000
+    LATENT = IMAGE_LATENT if args.latent_type == 'image' else DEPTH_LATENT
     for epoch in range(args.num_train_epochs):
         train_loss = 0
         for step, batch in enumerate(tqdm(train_dataloader)):
@@ -286,7 +294,7 @@ def main():
             # boxes = batch[BOXES]
             triplets = batch[TRIPLETS]
             objects = batch[OBJECTS]
-            latent = batch[IMAGE_LATENT]
+            latent = batch[LATENT]
 
             logit_img, logit_sg = model(triplets, objects, latent=latent)
             ground_truth = torch.arange(len(latent), dtype=torch.long, device=device)
@@ -315,7 +323,7 @@ def main():
                     # boxes = batch[BOXES]
                     triplets = batch[TRIPLETS]
                     objects = batch[OBJECTS]
-                    latent = batch[IMAGE_LATENT]
+                    latent = batch[LATENT]
 
                     logit_img, logit_sg = model(triplets, objects, latent=latent)
                     ground_truth = torch.arange(len(latent), dtype=torch.long, device=device)
