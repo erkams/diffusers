@@ -60,8 +60,14 @@ logger = get_logger(__name__, log_level="INFO")
 
 datasets.config.IN_MEMORY_MAX_SIZE = 3_000_000_000
 
-vg_configs = {'vocab': '/mnt/datasets/visual_genome/vocab.json', 'h5_path': '/mnt/datasets/visual_genome/test.h5',
-              'image_dir': '/mnt/datasets/visual_genome/images'}
+
+def get_vg_config(split):
+    return {'vocab': '/mnt/datasets/visual_genome/vocab.json',
+            'h5_path': f'/mnt/datasets/visual_genome/{split}.h5',
+            'image_dir': '/mnt/datasets/visual_genome/images'}
+
+
+vg_configs = {k: get_vg_config(k) for k in ['train', 'val', 'test']}
 
 
 def save_model_card(repo_id: str, images=None, base_model=str, dataset_name=str, repo_folder=None):
@@ -143,30 +149,30 @@ def parse_args():
         ),
     )
     parser.add_argument(
-        "--image_column", type=str, default="target_img", help="The column of the dataset containing an image."
+        "--image_column", type=str, default="image", help="The column of the dataset containing an image."
     )
     parser.add_argument(
         "--caption_column",
         type=str,
-        default="pos_prompt",
+        default="objects_str",
         help="The column of the dataset containing a caption or a list of captions.",
     )
     parser.add_argument(
         "--triplets_column",
         type=str,
-        default="target_tri",
+        default="triplets",
         help="The column of the dataset containing the list of triplets",
     )
     parser.add_argument(
         "--boxes_column",
         type=str,
-        default="target_box",
+        default="boxes",
         help="The column of the dataset containing the list of bounding boxes of the objects",
     )
     parser.add_argument(
         "--objects_column",
         type=str,
-        default="target_obj",
+        default="objects",
         help="The column of the dataset containing the list of the objects in the image",
     )
     parser.add_argument(
@@ -186,7 +192,8 @@ def parse_args():
         default="full",
         choices=["none", "const", "triplets", "objects"],
         help=(
-            "Whether to disable captions during training. Check if you have something else to condition on, like scene graphs."
+            "Whether to disable captions during training. Check if you have something else to condition on, "
+            "like scene graphs. "
         ),
     )
     parser.add_argument(
@@ -504,6 +511,8 @@ def make_grid(imgs: List[Image.Image], rows: int, cols: int) -> Image.Image:
 
 def main():
     args = parse_args()
+    assert args.dataset_name is not None, "Need a dataset name."
+
     logging_dir = os.path.join(args.output_dir, args.logging_dir)
 
     accelerator_project_config = ProjectConfiguration(total_limit=args.checkpoints_total_limit)
@@ -599,6 +608,8 @@ def main():
         sg_net.train()
 
     else:
+        assert args.sg_model_path is not None, "Please specify a path to a pretrained SG model."
+
         from simsg import SIMSGModel
         # initializing the SG Model with the pretrained model
         checkpoint = torch.load(args.sg_model_path)
@@ -790,72 +801,6 @@ def main():
 
     # In distributed training, the load_dataset function guarantees that only one local process can concurrently
     # download the dataset.
-    if args.dataset_name is not None:
-        if 'clevr' in args.dataset_name:
-            # Downloading and loading a dataset from the hub.
-            dataset = load_dataset(
-                args.dataset_name,
-                args.dataset_config_name,
-                cache_dir=args.cache_dir,
-                keep_in_memory=True
-            )
-        elif 'vg' in args.dataset_name:
-            from simsg import VGDatabase, vg_collate_fn
-            dataset = VGDatabase(**vg_configs)
-
-    else:
-        data_files = {}
-        if args.train_data_dir is not None:
-            data_files["train"] = os.path.join(args.train_data_dir, "**")
-        dataset = load_dataset(
-            "imagefolder",
-            data_files=data_files,
-            cache_dir=args.cache_dir,
-        )
-        # See more about loading custom images at
-        # https://huggingface.co/docs/datasets/v2.4.0/en/image_load#imagefolder
-
-    # Preprocessing the datasets.
-    # We need to tokenize inputs and targets.
-    column_names = dataset["train"].column_names
-
-    # 6. Get the column names for input/target.
-    dataset_columns = DATASET_NAME_MAPPING.get(args.dataset_name, None)
-    if args.image_column is None:
-        image_column = dataset_columns[0] if dataset_columns is not None else column_names[0]
-    else:
-        image_column = args.image_column
-        if image_column not in column_names:
-            raise ValueError(
-                f"--image_column' value '{args.image_column}' needs to be one of: {', '.join(column_names)}"
-            )
-    if args.caption_column is None:
-        caption_column = dataset_columns[1] if dataset_columns is not None else column_names[1]
-    else:
-        caption_column = args.caption_column
-        if caption_column not in column_names:
-            raise ValueError(
-                f"--caption_column' value '{args.caption_column}' needs to be one of: {', '.join(column_names)}"
-            )
-    if args.triplets_column is not None:
-        triplets_column = args.triplets_column
-        if triplets_column not in column_names:
-            raise ValueError(
-                f"--triplets_column' value '{args.triplets_column}' needs to be one of: {', '.join(column_names)}"
-            )
-    if args.boxes_column is not None:
-        boxes_column = args.boxes_column
-        if boxes_column not in column_names:
-            raise ValueError(
-                f"--boxes_column' value '{args.boxes_column}' needs to be one of: {', '.join(column_names)}"
-            )
-    if args.objects_column is not None:
-        objects_column = args.objects_column
-        if objects_column not in column_names:
-            raise ValueError(
-                f"--objects_column' value '{args.objects_column}' needs to be one of: {', '.join(column_names)}"
-            )
-
     def prepare_sg_embeds(examples, is_train=True):
         max_length = (8, 21)
         sg_embeds = []
@@ -939,11 +884,21 @@ def main():
         ]
     )
 
+    def scale_box(boxes):
+        assert dataset_type == 'clevr', 'Only CLEVR dataset needs box scaling!'
+        if isinstance(boxes, list):
+            boxes = torch.tensor(boxes)
+        boxes = boxes.to(accelerator.device)
+        boxes = boxes * torch.tensor([320, 240, 320, 240]).to(accelerator.device) - torch.tensor(
+            [40, 0, 40, 0]).to(accelerator.device)
+        boxes = boxes.clip(0, 240) / 240
+        return boxes
+
     def preprocess_train(examples):
         images = [image.convert("RGB") for image in examples[image_column]]
         examples[triplets_column] = [torch.tensor(triplets, device=accelerator.device, dtype=torch.long) for triplets in
                                      examples[triplets_column]]
-        examples[boxes_column] = [torch.tensor(boxes, device=accelerator.device) for boxes in examples[boxes_column]]
+        examples[boxes_column] = [scale_box(boxes) for boxes in examples[boxes_column]]
         examples[objects_column] = [torch.tensor(objects, device=accelerator.device, dtype=torch.long) for objects in
                                     examples[objects_column]]
         examples["pixel_values"] = [train_transforms(image) for image in images]
@@ -954,18 +909,77 @@ def main():
     def preprocess_val(examples):
         examples[triplets_column] = [torch.tensor(triplets, device=accelerator.device, dtype=torch.long) for triplets in
                                      examples[triplets_column]]
-        examples[boxes_column] = [torch.tensor(boxes, device=accelerator.device) for boxes in examples[boxes_column]]
+        examples[boxes_column] = [scale_box(boxes) for boxes in examples[boxes_column]]
         examples[objects_column] = [torch.tensor(objects, device=accelerator.device, dtype=torch.long) for objects in
                                     examples[objects_column]]
         examples["input_ids"] = tokenize_captions(examples, is_train=False).to(accelerator.device)
         examples["sg_embeds"] = prepare_sg_embeds(examples, is_train=False)
         return examples
 
-    with accelerator.main_process_first():
-        if args.max_train_samples is not None:
-            dataset["train"] = dataset["train"].shuffle(seed=args.seed).select(range(args.max_train_samples))
-        # Set the training transforms
-        train_dataset = dataset["train"].with_transform(preprocess_train)
+    dataset_type = 'clevr' if 'clevr' in args.dataset_name else 'vg'
+    if dataset_type == 'clevr':
+        # Downloading and loading a dataset from the hub.
+        dataset = load_dataset(
+            args.dataset_name,
+            args.dataset_config_name,
+            cache_dir=args.cache_dir,
+            keep_in_memory=True
+        )
+
+        column_names = dataset["train"].column_names
+
+    elif dataset_type == 'vg':
+        from simsg import VGDiffDatabase, vg_collate_fn_diff
+        dataset = {
+            k: VGDiffDatabase(**vg_configs[k],
+                              image_size=args.resolution,
+                              prepare_sg_embeds=prepare_sg_embeds,
+                              tokenize_captions=tokenize_captions)
+            for k in ['train', 'val', 'test']}
+
+        column_names = dataset[0].keys()
+    else:
+        raise ValueError(f"Dataset {args.dataset_name} not supported. Supported datasets: clevr, vg")
+
+    # Preprocessing the datasets.
+    # We need to tokenize inputs and targets.
+
+    # 6. Get the column names for input/target.
+    dataset_columns = DATASET_NAME_MAPPING.get(args.dataset_name, None)
+    if args.image_column is None:
+        image_column = dataset_columns[0] if dataset_columns is not None else column_names[0]
+    else:
+        image_column = args.image_column
+        if image_column not in column_names:
+            raise ValueError(
+                f"--image_column' value '{args.image_column}' needs to be one of: {', '.join(column_names)}"
+            )
+    if args.caption_column is None:
+        caption_column = dataset_columns[1] if dataset_columns is not None else column_names[1]
+    else:
+        caption_column = args.caption_column
+        if caption_column not in column_names:
+            raise ValueError(
+                f"--caption_column' value '{args.caption_column}' needs to be one of: {', '.join(column_names)}"
+            )
+    if args.triplets_column is not None:
+        triplets_column = args.triplets_column
+        if triplets_column not in column_names:
+            raise ValueError(
+                f"--triplets_column' value '{args.triplets_column}' needs to be one of: {', '.join(column_names)}"
+            )
+    if args.boxes_column is not None:
+        boxes_column = args.boxes_column
+        if boxes_column not in column_names:
+            raise ValueError(
+                f"--boxes_column' value '{args.boxes_column}' needs to be one of: {', '.join(column_names)}"
+            )
+    if args.objects_column is not None:
+        objects_column = args.objects_column
+        if objects_column not in column_names:
+            raise ValueError(
+                f"--objects_column' value '{args.objects_column}' needs to be one of: {', '.join(column_names)}"
+            )
 
     def collate_fn(examples):
         pixel_values = torch.stack([example["pixel_values"] for example in examples])
@@ -975,6 +989,16 @@ def main():
         return {"pixel_values": pixel_values, "input_ids": input_ids, "sg_embeds": sg_embeds,
                 "prompt": examples[0][caption_column],
                 "triplets": examples[0][triplets_column], "boxes": examples[0][boxes_column]}
+
+    with accelerator.main_process_first():
+        if dataset_type == "clevr":
+            if args.max_train_samples is not None:
+                dataset["train"] = dataset["train"].shuffle(seed=args.seed).select(range(args.max_train_samples))
+            # Set the training transforms
+            train_dataset = dataset["train"].with_transform(preprocess_train)
+        elif dataset_type == "vg":
+            train_dataset = dataset["train"]
+            collate_fn = vg_collate_fn_diff
 
     # DataLoaders creation:
     train_dataloader = torch.utils.data.DataLoader(
@@ -1038,21 +1062,24 @@ def main():
     def validation_step(epoch):
         # Prepare validation sample
         val_sample = dataset['val'][0]
-        val_sample[triplets_column] = [torch.tensor(val_sample[triplets_column], device=accelerator.device,
-                                                    dtype=torch.long)]
-        val_sample[boxes_column] = [torch.tensor(val_sample[boxes_column], device=accelerator.device)]
-        val_sample[objects_column] = [torch.tensor(val_sample[objects_column], device=accelerator.device,
-                                                   dtype=torch.long)]
-        val_sample[caption_column] = [val_sample[caption_column]]
-        val_sample['sg_embeds'] = prepare_sg_embeds(val_sample)
-        val_sample["input_ids"] = tokenize_captions(val_sample).to(accelerator.device)
+        if dataset_type == "clevr":
+            val_sample[triplets_column] = [torch.tensor(val_sample[triplets_column], device=accelerator.device,
+                                                        dtype=torch.long)]
+            val_sample[boxes_column] = [scale_box(val_sample[boxes_column])]
+            val_sample[objects_column] = [torch.tensor(val_sample[objects_column], device=accelerator.device,
+                                                       dtype=torch.long)]
+            val_sample[caption_column] = [val_sample[caption_column]]
+            val_sample['sg_embeds'] = prepare_sg_embeds(val_sample)
+            val_sample["input_ids"] = tokenize_captions(val_sample).to(accelerator.device)
 
-        validation_prompt = get_caption(val_sample[caption_column][0])
+            validation_prompt = get_caption(val_sample[caption_column][0])
+        else:
+            validation_prompt = get_caption(val_sample[caption_column])
+
         logger.info(
             f"Running validation... \n Generating {args.num_validation_images} images with prompt:"
             f" {validation_prompt}."
         )
-
         # create pipeline
         pipeline = StableDiffusionPipeline.from_pretrained(
             args.pretrained_model_name_or_path,
@@ -1083,7 +1110,10 @@ def main():
                 tracker.writer.add_images("validation", np_images, epoch, dataformats="NHWC")
             if tracker.name == "wandb":
                 img_gt = val_sample[image_column]
-                if isinstance(img_gt, list):
+                # convert to PIL image
+                if isinstance(img_gt, torch.Tensor):  # VG
+                    img_gt = transforms.ToPILImage()(img_gt)
+                elif isinstance(img_gt, list):  # CLEVR?
                     img_gt = img_gt[0]
 
                 sizes = img_gt.size
@@ -1125,10 +1155,19 @@ def main():
         # run inference
         generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
         images = []
+        if dataset_type == "clevr":
+            eval_samples = dataset['val'].with_transform(preprocess_val)[:args.num_eval_images]
+        elif dataset_type == "vg":
+            val_loader = torch.utils.data.DataLoader(dataset['val'],
+                                                     batch_size=args.num_eval_images,
+                                                     shuffle=False,
+                                                     num_workers=4,
+                                                     collate_fn=collate_fn)
+            eval_samples = next(iter(val_loader))
+        else:
+            raise ValueError(f"Dataset type {dataset_type} not supported. Please choose between 'clevr' and 'vg'")
 
-        val_dset = dataset['val'].with_transform(preprocess_val)[:args.num_eval_images]
-
-        for input_ids, sg_embeds in zip(val_dset['input_ids'], val_dset['sg_embeds']):
+        for input_ids, sg_embeds in zip(eval_samples['input_ids'], eval_samples['sg_embeds']):
             input_ids = input_ids.unsqueeze(0).to(accelerator.device)
             sg_embeds = sg_embeds.unsqueeze(0).to(accelerator.device)
 
@@ -1141,13 +1180,14 @@ def main():
         box_aps = 0.
         obj_aps = 0.
         sum_num_objs = 0.
-        all_boxes_gt = val_dset['boxes']
-        all_objects_gt = val_dset['objects']
+        all_boxes_gt = eval_samples['boxes']
+        all_objects_gt = eval_samples['objects']
         for i in range(len(images)):
             boxes_gt = all_boxes_gt[i][:-1]
-            boxes_gt = boxes_gt * torch.tensor([320, 240, 320, 240]).to(accelerator.device) - torch.tensor(
-                [40, 0, 40, 0]).to(accelerator.device)
-            boxes_gt = boxes_gt.clip(0, 240) / 240
+
+            # boxes_gt = boxes_gt * torch.tensor([320, 240, 320, 240]).to(accelerator.device) - torch.tensor(
+            #     [40, 0, 40, 0]).to(accelerator.device)
+            # boxes_gt = boxes_gt.clip(0, 240) / 240
 
             objects_gt = all_objects_gt[i][:-1]
             ap_box, ap_obj, num_objs = object_detection_metrics.calculate(images[i], boxes_gt, objects_gt)
@@ -1165,10 +1205,12 @@ def main():
         logger.info(f"NUM_OBJS: {sum_num_objs / len(images)}")
 
         # FID AND IS METRICS
+        images_gt = eval_samples[image_column]
+        images_gt = square_imgs(images_gt, args.resolution)
 
         metrics = torch_fidelity.calculate_metrics(
             input1=ListDataset(images),
-            input2=ListDataset(dataset['val'][:args.num_eval_images][image_column]),
+            input2=ListDataset(images_gt),
             cuda=True,
             isc=True,
             fid=True,
@@ -1191,7 +1233,7 @@ def main():
             last_best_isc = metrics[isc_metric]
 
         # VISUALIZE
-        images_gt = val_dset['image']
+        images_gt = eval_samples[image_column]
         images_gt = square_imgs(images_gt, args.resolution)
 
         merged = []
