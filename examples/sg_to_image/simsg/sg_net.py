@@ -155,15 +155,16 @@ class SGNet(nn.Module):
             i, g = self._forward(triplets[i], objects[i], image, latent[i], boxes, depth)
             image_features.append(i)
             graph_features.append(g)
-        image_features = torch.stack(image_features, dim=0)
-        graph_features = torch.stack(graph_features, dim=0)
+        image_features = torch.cat(image_features)
+        graph_features = torch.cat(graph_features)
 
-        assert graph_features.shape[-1] == self.embed_dim
+        assert graph_features.shape == (len(latent), self.embed_dim)
 
         # normalized features
         image_features = image_features / image_features.norm(dim=1, keepdim=True)
         graph_features = graph_features / graph_features.norm(dim=1, keepdim=True)
-
+        print(image_features.shape)
+        print(graph_features.shape)
         # cosine similarity as logits
         logit_scale = self.logit_scale.exp()
         logits_per_image = logit_scale * image_features @ graph_features.t()
