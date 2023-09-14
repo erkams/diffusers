@@ -306,8 +306,10 @@ def main():
 
             total_loss = (loss_img(logit_img, ground_truth) + loss_sg(logit_sg, ground_truth)) / 2
             total_loss.backward()
+            acc_i = (torch.argmax(logit_img.detach(), 1) == ground_truth).sum()
+            acc_t = (torch.argmax(logit_img.detach(), 0) == ground_truth).sum()
 
-            run.log({"step_loss": total_loss.item(), "lr": optimizer.param_groups[0]['lr']}, step=global_step)
+            run.log({"step_loss": total_loss.item(), "acc": (acc_i + acc_t) / 2 / args.train_batch_size, "lr": optimizer.param_groups[0]['lr']}, step=global_step)
             optimizer.step()
 
             global_step += 1
@@ -319,6 +321,8 @@ def main():
             model.eval()
             with torch.no_grad():
                 val_loss = 0
+                acc_i = 0
+                acc_t = 0
                 for step, batch in enumerate(tqdm(val_dataloader)):
                     # imgs = batch['image']
                     # boxes = batch[BOXES]
@@ -331,8 +335,11 @@ def main():
 
                     total_loss = (loss_img(logit_img, ground_truth) + loss_sg(logit_sg, ground_truth)) / 2
                     val_loss += total_loss.item() / len(val_dataloader)
+                    acc_i += (torch.argmax(logit_img.detach(), 1) == ground_truth).sum() / args.train_batch_size
+                    acc_t += (torch.argmax(logit_img.detach(), 0) == ground_truth).sum() / args.train_batch_size
 
-                run.log({"val_loss": val_loss}, step=global_step)
+                run.log({"val_loss": val_loss, "acc": (acc_i + acc_t) / 2}, step=global_step)
+
                 if val_loss < min_loss:
                     print(f'Min loss improved from {min_loss} to {val_loss}')
                     min_loss = val_loss
