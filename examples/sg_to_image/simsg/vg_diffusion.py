@@ -156,7 +156,7 @@ def vg_collate_fn_diff(batch):
     all_imgs = torch.stack(all_imgs)
     # all_objs = torch.stack(all_objs)
     # all_boxes = torch.stack(all_boxes)
-    all_triples = torch.stack(all_triples)
+    # all_triples = torch.stack(all_triples)
     # all_obj_to_img = torch.cat(all_obj_to_img)
     # all_triple_to_img = torch.cat(all_triple_to_img)
 
