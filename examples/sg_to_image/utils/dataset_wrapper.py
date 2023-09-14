@@ -58,12 +58,14 @@ class ListDataset(Dataset):
     def __getitem__(self, idx):
         # if img is PIL image, convert to torch uint8 tensor
         if isinstance(self.imgs[idx], Image.Image):
-            self.imgs[idx] = transforms.ToTensor()(self.imgs[idx])
+            assert self.imgs[idx].size[0] == self.imgs[idx].size[1]
+            im = transforms.ToTensor()(self.imgs[idx])
             # to torch.uint8
-            self.imgs[idx] = (255*self.imgs[idx]).to(torch.uint8)
+            return (im * 255).to(torch.uint8)
         elif isinstance(self.imgs[idx], torch.Tensor):
+            assert self.imgs[idx].size(1) == self.imgs[idx].size(2)
             if self.imgs[idx].dtype != torch.uint8:
-                raise ValueError('Image tensor must be of type torch.uint8')
+                return (self.imgs[idx] * 255).to(torch.uint8)
         return self.imgs[idx]
     
     def __len__(self):
