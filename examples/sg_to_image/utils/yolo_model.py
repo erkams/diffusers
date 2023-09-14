@@ -8,12 +8,12 @@ import numpy as np
 
 
 class ObjectDetectionMetrics:
-    def __init__(self, iou=0.4) -> None:
+    def __init__(self, iou=0.4, dataset_type='clevr') -> None:
         super().__init__()
 
         model_path = hf_hub_download(repo_id='erkam/yolo-clevr', filename='best.pt')
         self.iou = iou
-
+        self.dataset_type = dataset_type
         self.yolo_model = YOLO(model_path)
         self.sam_model = FastSAM('FastSAM-s.pt')
 
@@ -82,7 +82,7 @@ class ObjectDetectionMetrics:
 
         ap_box = compute_average_precision(precision_box, recall_box)
 
-        if len(perm) == 0:
+        if len(perm) == 0 or self.dataset_type != 'clevr':
             return ap_box, 0, len(boxes_pred)
 
         # check if the objects are correct
