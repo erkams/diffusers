@@ -51,6 +51,8 @@ class SGNet(nn.Module):
         if len(kwargs) > 0:
             print('WARNING: Model got unexpected kwargs ', kwargs)
 
+        assert np.sqrt(embed_dim) == int(np.sqrt(embed_dim)), 'Embedding dimension must be a square of an integer'
+
         self.vocab = vocab
         self.embed_dim = embed_dim
         self.hidden_dim = hidden_dim
@@ -92,9 +94,10 @@ class SGNet(nn.Module):
         self.gconv = GraphTripleConv(obj_embed_dim, self.embed_dim, output_dim=embed_dim, hidden_dim=hidden_dim,
                                      pooling='avg',
                                      mlp_normalization='none')
-        self.gconv_net = GraphTripleConvNet(obj_embed_dim, self.embed_dim, num_layers=layers, hidden_dim=hidden_dim,
-                                            pooling='avg',
-                                            mlp_normalization='none')
+        if layers != 0:
+            self.gconv_net = GraphTripleConvNet(obj_embed_dim, self.embed_dim, num_layers=layers, hidden_dim=hidden_dim,
+                                                pooling='avg',
+                                                mlp_normalization='none')
         if self.projection:
             self.graph_projection = nn.Linear(embed_dim, embed_dim)
             self.graph_projection.apply(_init_weights)
