@@ -197,6 +197,24 @@ def parse_args():
     return args
 
 
+def add_noise_to_latent(latent):
+    desired_snr = 15 + 10 * torch.rand(1, device=latent.device)
+
+    # Calculate the standard deviation of the original tensor
+    std_dev = torch.std(latent)
+
+    # Calculate the desired noise standard deviation based on SNR or noise level
+    desired_noise_std_dev = std_dev / (10 ** (desired_snr / 20.0))
+
+    # Calculate the noise fraction
+    noise_fraction = desired_noise_std_dev / std_dev
+
+    # Generate and add noise to the tensor as previously shown
+    noise = torch.normal(float(noise_fraction * std_dev), float(desired_noise_std_dev), size=latent.shape,
+                         device=latent.device)
+    return latent + noise
+
+
 def build_model(args, device=None):
     with open(args.vocab_json, 'r') as f:
         vocab = json.load(f)
@@ -253,9 +271,9 @@ def build_dataloader(args, device=None):
         examples[BOXES] = [boxes for boxes in examples[BOXES]]
         examples[OBJECTS] = [torch.tensor(objects, device=device, dtype=torch.long) for objects in
                              examples[OBJECTS]]
-        examples[DEPTH_LATENT] = [torch.tensor(depth_latent, device=device, dtype=torch.float) for depth_latent in
+        examples[DEPTH_LATENT] = [add_noise_to_latent(torch.tensor(depth_latent, device=device, dtype=torch.float)) for depth_latent in
                                   examples[DEPTH_LATENT]]
-        examples[IMAGE_LATENT] = [torch.tensor(image_latent, device=device, dtype=torch.float) for image_latent in
+        examples[IMAGE_LATENT] = [add_noise_to_latent(torch.tensor(image_latent, device=device, dtype=torch.float)) for image_latent in
                                   examples[IMAGE_LATENT]]
         # examples["pixel_values"] = [train_transforms(image) for image in images]
         return examples
