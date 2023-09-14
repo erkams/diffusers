@@ -646,6 +646,7 @@ def main():
     )
 
     sg_net = build_sg_encoder(args)
+    sg_net = accelerator.prepare(sg_net)
 
     # freeze parameters of models to save more memory
     unet.requires_grad_(False)
@@ -969,7 +970,7 @@ def main():
                               max_samples=args.max_train_samples)
             for k in ['train', 'val', 'test']}
 
-        column_names = dataset[0].keys()
+        column_names = dataset['val'][0].keys()
     else:
         raise ValueError(f"Dataset {args.dataset_name} not supported. Supported datasets: clevr, vg")
 
