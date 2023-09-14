@@ -264,12 +264,13 @@ def build_dataloader(args, device=None):
 def main():
     args = parse_args()
     print(args)
-    train_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+    train_id = datetime.now().strftime("%d%H%M%S")
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     run = wandb.init(
         # Set the project where this run will be logged
         project="sg_encoder",
+        name=f"sg-{args.dataset_name}_bs{args.train_batch_size}_{args.learning_rate}{'_proj' if args.projection else ''}_{train_id}",
         # Track hyperparameters and run metadata
         config=vars(args))
 
