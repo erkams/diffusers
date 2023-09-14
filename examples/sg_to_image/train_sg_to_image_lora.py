@@ -831,6 +831,72 @@ def main():
 
     # In distributed training, the load_dataset function guarantees that only one local process can concurrently
     # download the dataset.
+
+    if dataset_type == 'clevr':
+        # Downloading and loading a dataset from the hub.
+        dataset = load_dataset(
+            args.dataset_name,
+            args.dataset_config_name,
+            cache_dir=args.cache_dir,
+            keep_in_memory=True
+        )
+
+        column_names = dataset["train"].column_names
+
+    elif dataset_type == 'vg':
+        from simsg import VGDiffDatabase, vg_collate_fn_diff
+        dataset = {
+            k: VGDiffDatabase(**vg_configs[k],
+                              image_size=args.resolution,
+                              prepare_sg_embeds=prepare_sg_embeds,
+                              tokenize_captions=tokenize_captions,
+                              max_samples=args.max_train_samples)
+            for k in ['train', 'val', 'test']}
+
+        column_names = dataset['val'][0].keys()
+    else:
+        raise ValueError(f"Dataset {args.dataset_name} not supported. Supported datasets: clevr, vg")
+
+    # Preprocessing the datasets.
+    # We need to tokenize inputs and targets.
+
+    # 6. Get the column names for input/target.
+    dataset_columns = DATASET_NAME_MAPPING.get(args.dataset_name, None)
+    if args.image_column is None:
+        image_column = dataset_columns[0] if dataset_columns is not None else column_names[0]
+    else:
+        image_column = args.image_column
+        if image_column not in column_names:
+            raise ValueError(
+                f"--image_column' value '{args.image_column}' needs to be one of: {', '.join(column_names)}"
+            )
+    if args.caption_column is None:
+        caption_column = dataset_columns[1] if dataset_columns is not None else column_names[1]
+    else:
+        caption_column = args.caption_column
+        if caption_column not in column_names:
+            raise ValueError(
+                f"--caption_column' value '{args.caption_column}' needs to be one of: {', '.join(column_names)}"
+            )
+    if args.triplets_column is not None:
+        triplets_column = args.triplets_column
+        if triplets_column not in column_names:
+            raise ValueError(
+                f"--triplets_column' value '{args.triplets_column}' needs to be one of: {', '.join(column_names)}"
+            )
+    if args.boxes_column is not None:
+        boxes_column = args.boxes_column
+        if boxes_column not in column_names:
+            raise ValueError(
+                f"--boxes_column' value '{args.boxes_column}' needs to be one of: {', '.join(column_names)}"
+            )
+    if args.objects_column is not None:
+        objects_column = args.objects_column
+        if objects_column not in column_names:
+            raise ValueError(
+                f"--objects_column' value '{args.objects_column}' needs to be one of: {', '.join(column_names)}"
+            )
+
     def prepare_sg_embeds(examples, is_train=True):
         max_length = (8, 21)
         sg_embeds = []
@@ -948,71 +1014,6 @@ def main():
         examples["input_ids"] = tokenize_captions(examples, is_train=False).to(accelerator.device)
         examples["sg_embeds"] = prepare_sg_embeds(examples, is_train=False)
         return examples
-
-    if dataset_type == 'clevr':
-        # Downloading and loading a dataset from the hub.
-        dataset = load_dataset(
-            args.dataset_name,
-            args.dataset_config_name,
-            cache_dir=args.cache_dir,
-            keep_in_memory=True
-        )
-
-        column_names = dataset["train"].column_names
-
-    elif dataset_type == 'vg':
-        from simsg import VGDiffDatabase, vg_collate_fn_diff
-        dataset = {
-            k: VGDiffDatabase(**vg_configs[k],
-                              image_size=args.resolution,
-                              prepare_sg_embeds=prepare_sg_embeds,
-                              tokenize_captions=tokenize_captions,
-                              max_samples=args.max_train_samples)
-            for k in ['train', 'val', 'test']}
-
-        column_names = dataset['val'][0].keys()
-    else:
-        raise ValueError(f"Dataset {args.dataset_name} not supported. Supported datasets: clevr, vg")
-
-    # Preprocessing the datasets.
-    # We need to tokenize inputs and targets.
-
-    # 6. Get the column names for input/target.
-    dataset_columns = DATASET_NAME_MAPPING.get(args.dataset_name, None)
-    if args.image_column is None:
-        image_column = dataset_columns[0] if dataset_columns is not None else column_names[0]
-    else:
-        image_column = args.image_column
-        if image_column not in column_names:
-            raise ValueError(
-                f"--image_column' value '{args.image_column}' needs to be one of: {', '.join(column_names)}"
-            )
-    if args.caption_column is None:
-        caption_column = dataset_columns[1] if dataset_columns is not None else column_names[1]
-    else:
-        caption_column = args.caption_column
-        if caption_column not in column_names:
-            raise ValueError(
-                f"--caption_column' value '{args.caption_column}' needs to be one of: {', '.join(column_names)}"
-            )
-    if args.triplets_column is not None:
-        triplets_column = args.triplets_column
-        if triplets_column not in column_names:
-            raise ValueError(
-                f"--triplets_column' value '{args.triplets_column}' needs to be one of: {', '.join(column_names)}"
-            )
-    if args.boxes_column is not None:
-        boxes_column = args.boxes_column
-        if boxes_column not in column_names:
-            raise ValueError(
-                f"--boxes_column' value '{args.boxes_column}' needs to be one of: {', '.join(column_names)}"
-            )
-    if args.objects_column is not None:
-        objects_column = args.objects_column
-        if objects_column not in column_names:
-            raise ValueError(
-                f"--objects_column' value '{args.objects_column}' needs to be one of: {', '.join(column_names)}"
-            )
 
     def collate_fn(examples):
         assert dataset_type == 'clevr', 'Only CLEVR dataset needs collate_fn!'
