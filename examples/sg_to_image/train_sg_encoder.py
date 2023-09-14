@@ -177,6 +177,22 @@ def parse_args():
             "Number of layers for the graphconv"
         ),
     )
+    parser.add_argument(
+        "--embed_dim",
+        type=int,
+        default=1024,
+        help=(
+            "Dimension of the embedding"
+        ),
+    )
+    parser.add_argument(
+        "--hidden_dim",
+        type=int,
+        default=1024,
+        help=(
+            "Dimension of the hidden layer"
+        ),
+    )
     args = parser.parse_args()
     return args
 
@@ -185,7 +201,7 @@ def build_model(args, device=None):
     with open(args.vocab_json, 'r') as f:
         vocab = json.load(f)
 
-    sg_net = SGNet(vocab, projection=args.projection, layers=args.layers)
+    sg_net = SGNet(vocab, projection=args.projection, layers=args.layers, embed_dim=args.embed_dim, hidden_dim=args.hidden_dim)
     sg_net.to(device)
 
     return sg_net
