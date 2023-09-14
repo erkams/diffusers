@@ -338,7 +338,7 @@ def main():
                     acc_i += (torch.argmax(logit_img.detach(), 1) == ground_truth).sum() / args.train_batch_size
                     acc_t += (torch.argmax(logit_img.detach(), 0) == ground_truth).sum() / args.train_batch_size
 
-                run.log({"val_loss": val_loss, "acc": (acc_i + acc_t) / 2}, step=global_step)
+                run.log({"val_loss": val_loss, "val_acc": (acc_i + acc_t) / 2}, step=global_step)
 
                 if val_loss < min_loss:
                     print(f'Min loss improved from {min_loss} to {val_loss}')
