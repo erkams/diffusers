@@ -278,13 +278,27 @@ def build_dataloader(args, device=None):
         # examples["pixel_values"] = [train_transforms(image) for image in images]
         return examples
 
+    def preprocess_val(examples):
+        # images = [image.convert("RGB") for image in examples[IMAGE]]
+        examples[TRIPLETS] = [torch.tensor(triplets, device=device, dtype=torch.long) for triplets in
+                              examples[TRIPLETS]]
+        examples[BOXES] = [boxes for boxes in examples[BOXES]]
+        examples[OBJECTS] = [torch.tensor(objects, device=device, dtype=torch.long) for objects in
+                             examples[OBJECTS]]
+        examples[DEPTH_LATENT] = [torch.tensor(depth_latent, device=device, dtype=torch.float) for depth_latent in
+                                  examples[DEPTH_LATENT]]
+        examples[IMAGE_LATENT] = [torch.tensor(image_latent, device=device, dtype=torch.float) for image_latent in
+                                  examples[IMAGE_LATENT]]
+        # examples["pixel_values"] = [train_transforms(image) for image in images]
+        return examples
+
     if args.max_train_samples is not None:
         dataset["train"] = dataset["train"].shuffle(seed=args.seed).select(range(args.max_train_samples))
     if args.max_val_samples is not None:
         dataset["val"] = dataset["val"].shuffle(seed=args.seed).select(range(args.max_val_samples))
 
     train_dataset = dataset["train"].with_transform(preprocess_train)
-    val_dataset = dataset["val"].with_transform(preprocess_train)
+    val_dataset = dataset["val"].with_transform(preprocess_val)
     # DataLoaders creation:
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
