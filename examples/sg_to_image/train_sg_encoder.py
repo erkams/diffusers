@@ -306,10 +306,10 @@ def main():
 
             total_loss = (loss_img(logit_img, ground_truth) + loss_sg(logit_sg, ground_truth)) / 2
             total_loss.backward()
-            acc_i = (torch.argmax(logit_img.detach(), 1) == ground_truth).sum()
-            acc_t = (torch.argmax(logit_img.detach(), 0) == ground_truth).sum()
+            # acc_i = (torch.argmax(logit_img.detach(), 1) == ground_truth).sum()
+            # acc_t = (torch.argmax(logit_img.detach(), 0) == ground_truth).sum()
 
-            run.log({"step_loss": total_loss.item(), "acc": (acc_i + acc_t) / 2 / args.train_batch_size, "lr": optimizer.param_groups[0]['lr']}, step=global_step)
+            run.log({"step_loss": total_loss.item(), "lr": optimizer.param_groups[0]['lr']}, step=global_step)
             optimizer.step()
 
             global_step += 1
