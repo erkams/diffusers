@@ -150,6 +150,8 @@ def parse_args():
         "--lr_warmup_steps", type=int, default=500, help="Number of steps for the warmup in the lr scheduler."
     )
     parser.add_argument("--num_train_epochs", type=int, default=100)
+
+    # Model parameters
     parser.add_argument("--vocab_json", type=str, default="./vocab.json", help="The path to the vocab file.")
     parser.add_argument(
         "--latent_type",
@@ -167,6 +169,14 @@ def parse_args():
             "Whether to use projection for the graph."
         ),
     )
+    parser.add_argument(
+        "--layers",
+        type=int,
+        default=5,
+        help=(
+            "Number of layers for the graphconv"
+        ),
+    )
     args = parser.parse_args()
     return args
 
@@ -175,7 +185,7 @@ def build_model(args, device=None):
     with open(args.vocab_json, 'r') as f:
         vocab = json.load(f)
 
-    sg_net = SGNet(vocab, projection=args.projection)
+    sg_net = SGNet(vocab, projection=args.projection, layers=args.layers)
     sg_net.to(device)
 
     return sg_net
