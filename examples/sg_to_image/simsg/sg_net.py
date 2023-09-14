@@ -192,8 +192,8 @@ class SGNet(nn.Module):
         if latent is not None:
             # interpolate spatial dimensions to (sqrt(embed_dim), sqrt(embed_dim))
             if latent.shape[-1] != self.img_dim:
-                latent = F.interpolate(latent, size=(self.img_dim, self.img_dim), mode='bilinear',
-                                       align_corners=False)
+                latent = F.interpolate(latent.unsqueeze(1), size=(self.img_dim, self.img_dim), mode='bilinear',
+                                       align_corners=False).squeeze(1)
             image_features = torch.flatten(latent, start_dim=-2)
             image_features = self.image_projection @ image_features
             assert image_features.shape[-1] == self.embed_dim
