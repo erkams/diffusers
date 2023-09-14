@@ -1182,9 +1182,9 @@ def main():
         for _ in range(num_batches):
             eval_samples = next(iter(loader))
             images = []
-            for sample in eval_samples:
-                input_ids = sample['input_ids']
-                sg_embeds = sample['sg_embeds']
+            for input_ids, sg_embeds in zip(eval_samples["input_ids"], eval_samples["sg_embeds"]):
+                # input_ids = sample['input_ids']
+                # sg_embeds = sample['sg_embeds']
                 input_ids = input_ids.unsqueeze(0).to(accelerator.device)
                 sg_embeds = sg_embeds.unsqueeze(0).to(accelerator.device)
 
