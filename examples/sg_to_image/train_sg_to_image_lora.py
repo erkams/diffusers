@@ -843,6 +843,11 @@ def main():
         sg_embeds = []
         for triplets, boxes, objects in zip(examples[triplets_column], examples[boxes_column],
                                             examples[objects_column]):
+
+            triplets = triplets.to(accelerator.device)
+            boxes = boxes.to(accelerator.device)
+            objects = objects.to(accelerator.device)
+
             if is_train:
                 random.shuffle(triplets)
             if args.train_sg:
