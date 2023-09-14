@@ -49,7 +49,6 @@ class VGDiffDatabase(Dataset):
 
     def __getitem__(self, index):
         img_path = os.path.join(self.image_dir, str(self.image_paths[index], encoding="utf-8"))
-        print(img_path)
         with open(img_path, 'rb') as f:
             with PIL.Image.open(f) as image:
                 WW, HH = image.size
