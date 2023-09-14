@@ -71,7 +71,7 @@ def parse_args():
         default=None,
         help="The directory where the downloaded models and datasets will be stored.",
     )
-    parser.add_argument("--seed", type=int, default=None, help="A seed for reproducible training.")
+    parser.add_argument("--seed", type=int, default=1234, help="A seed for reproducible training.")
     parser.add_argument(
         "--resolution",
         type=int,
@@ -92,6 +92,9 @@ def parse_args():
     )
     parser.add_argument(
         "--train_batch_size", type=int, default=4, help="Batch size (per device) for the training dataloader."
+    )
+    parser.add_argument(
+        "--val_batch_size", type=int, default=8, help="Batch size (per device) for the training dataloader."
     )
     parser.add_argument(
         "--max_train_samples",
@@ -243,7 +246,7 @@ def build_dataloader(args, device=None):
         val_dataset,
         shuffle=False,
         collate_fn=collate_fn,
-        batch_size=args.train_batch_size,
+        batch_size=args.val_batch_size,
         num_workers=args.dataloader_num_workers,
     )
 
@@ -268,8 +271,7 @@ def main():
     loss_img = nn.CrossEntropyLoss()
     loss_sg = nn.CrossEntropyLoss()
 
-    optimizer = optim.Adam(model.parameters(), lr=args.learning_rate, betas=(0.9, 0.98), eps=1e-6,
-                           weight_decay=0.2)
+    optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
 
     train_dataloader, val_dataloader = build_dataloader(args, device=device)
     if args.lr_scheduler is not None and args.lr_scheduler != 'plateau':
@@ -288,7 +290,7 @@ def main():
     min_loss = 100000
     LATENT = IMAGE_LATENT if args.latent_type == 'image' else DEPTH_LATENT
     for epoch in range(args.num_train_epochs):
-        train_loss = 0
+        train_loss = 0.
         for step, batch in enumerate(tqdm(train_dataloader)):
             optimizer.zero_grad()
             # imgs = batch['image']
@@ -306,12 +308,11 @@ def main():
 
             total_loss = (loss_img(logit_img, ground_truth) + loss_sg(logit_sg, ground_truth)) / 2
             total_loss.backward()
+            optimizer.step()
             # acc_i = (torch.argmax(logit_img.detach(), 1) == ground_truth).sum()
             # acc_t = (torch.argmax(logit_img.detach(), 0) == ground_truth).sum()
 
             run.log({"step_loss": total_loss.item(), "lr": optimizer.param_groups[0]['lr']}, step=global_step)
-            optimizer.step()
-
             global_step += 1
             train_loss += total_loss.item() / len(train_dataloader)
 
@@ -335,8 +336,8 @@ def main():
 
                     total_loss = (loss_img(logit_img, ground_truth) + loss_sg(logit_sg, ground_truth)) / 2
                     val_loss += total_loss.item() / len(val_dataloader)
-                    acc_i += (torch.argmax(logit_img.detach(), 1) == ground_truth).sum() / args.train_batch_size
-                    acc_t += (torch.argmax(logit_img.detach(), 0) == ground_truth).sum() / args.train_batch_size
+                    acc_i += (torch.argmax(logit_img, 1) == ground_truth).sum() / args.val_batch_size
+                    acc_t += (torch.argmax(logit_img, 0) == ground_truth).sum() / args.val_batch_size
 
                 run.log({"val_loss": val_loss, "val_acc": (acc_i + acc_t) / 2 / len(val_dataloader)}, step=global_step)
 
@@ -347,10 +348,10 @@ def main():
 
             model.train()
 
-        if args.lr_scheduler == 'plateau':
-            lr_scheduler.step(val_loss)
-        elif args.lr_scheduler is not None:
-            lr_scheduler.step()
+            if args.lr_scheduler == 'plateau':
+                lr_scheduler.step(val_loss)
+            elif args.lr_scheduler is not None:
+                lr_scheduler.step()
 
         # if epoch % 10 == 0:
         #     # save the file with date identifier
