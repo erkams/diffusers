@@ -225,6 +225,7 @@ def build_dataloader(args, device=None):
 
     if args.max_train_samples is not None:
         dataset["train"] = dataset["train"].shuffle(seed=args.seed).select(range(args.max_train_samples))
+    if args.max_val_samples is not None:
         dataset["val"] = dataset["val"].shuffle(seed=args.seed).select(range(args.max_val_samples))
 
     train_dataset = dataset["train"].with_transform(preprocess_train)
