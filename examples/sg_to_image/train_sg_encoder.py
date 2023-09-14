@@ -352,9 +352,9 @@ def main():
         elif args.lr_scheduler is not None:
             lr_scheduler.step()
 
-        if epoch % 10 == 0:
-            # save the file with date identifier
-            torch.save(model.state_dict(), f'./model/sg_encoder_{epoch}_{train_id}.pt')
+        # if epoch % 10 == 0:
+        #     # save the file with date identifier
+        #     torch.save(model.state_dict(), f'./model/sg_encoder_{epoch}_{train_id}.pt')
 
 
 if __name__ == '__main__':
