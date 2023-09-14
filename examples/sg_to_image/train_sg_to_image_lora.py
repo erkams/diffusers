@@ -574,6 +574,12 @@ def main():
     assert args.dataset_name is not None, "Need a dataset name."
     dataset_type = 'clevr' if 'clevr' in args.dataset_name else 'vg'
 
+    image_column = args.image_column
+    caption_column = args.caption_column
+    triplets_column = args.triplets_column
+    boxes_column = args.boxes_column
+    objects_column = args.objects_column
+
     # logging_dir = os.path.join(args.output_dir, args.logging_dir)
 
     accelerator_project_config = ProjectConfiguration(total_limit=args.checkpoints_total_limit)
@@ -832,71 +838,6 @@ def main():
     # In distributed training, the load_dataset function guarantees that only one local process can concurrently
     # download the dataset.
 
-    if dataset_type == 'clevr':
-        # Downloading and loading a dataset from the hub.
-        dataset = load_dataset(
-            args.dataset_name,
-            args.dataset_config_name,
-            cache_dir=args.cache_dir,
-            keep_in_memory=True
-        )
-
-        column_names = dataset["train"].column_names
-
-    elif dataset_type == 'vg':
-        from simsg import VGDiffDatabase, vg_collate_fn_diff
-        dataset = {
-            k: VGDiffDatabase(**vg_configs[k],
-                              image_size=args.resolution,
-                              prepare_sg_embeds=prepare_sg_embeds,
-                              tokenize_captions=tokenize_captions,
-                              max_samples=args.max_train_samples)
-            for k in ['train', 'val', 'test']}
-
-        column_names = dataset['val'][0].keys()
-    else:
-        raise ValueError(f"Dataset {args.dataset_name} not supported. Supported datasets: clevr, vg")
-
-    # Preprocessing the datasets.
-    # We need to tokenize inputs and targets.
-
-    # 6. Get the column names for input/target.
-    dataset_columns = DATASET_NAME_MAPPING.get(args.dataset_name, None)
-    if args.image_column is None:
-        image_column = dataset_columns[0] if dataset_columns is not None else column_names[0]
-    else:
-        image_column = args.image_column
-        if image_column not in column_names:
-            raise ValueError(
-                f"--image_column' value '{args.image_column}' needs to be one of: {', '.join(column_names)}"
-            )
-    if args.caption_column is None:
-        caption_column = dataset_columns[1] if dataset_columns is not None else column_names[1]
-    else:
-        caption_column = args.caption_column
-        if caption_column not in column_names:
-            raise ValueError(
-                f"--caption_column' value '{args.caption_column}' needs to be one of: {', '.join(column_names)}"
-            )
-    if args.triplets_column is not None:
-        triplets_column = args.triplets_column
-        if triplets_column not in column_names:
-            raise ValueError(
-                f"--triplets_column' value '{args.triplets_column}' needs to be one of: {', '.join(column_names)}"
-            )
-    if args.boxes_column is not None:
-        boxes_column = args.boxes_column
-        if boxes_column not in column_names:
-            raise ValueError(
-                f"--boxes_column' value '{args.boxes_column}' needs to be one of: {', '.join(column_names)}"
-            )
-    if args.objects_column is not None:
-        objects_column = args.objects_column
-        if objects_column not in column_names:
-            raise ValueError(
-                f"--objects_column' value '{args.objects_column}' needs to be one of: {', '.join(column_names)}"
-            )
-
     def prepare_sg_embeds(examples, is_train=True):
         max_length = (8, 21)
         sg_embeds = []
@@ -1024,6 +965,26 @@ def main():
         return {"pixel_values": pixel_values, "input_ids": input_ids, "sg_embeds": sg_embeds,
                 "prompt": examples[0][caption_column],
                 "triplets": examples[0][triplets_column], "boxes": examples[0][boxes_column]}
+
+    if dataset_type == 'clevr':
+        # Downloading and loading a dataset from the hub.
+        dataset = load_dataset(
+            args.dataset_name,
+            args.dataset_config_name,
+            cache_dir=args.cache_dir,
+            keep_in_memory=True
+        )
+    elif dataset_type == 'vg':
+        from simsg import VGDiffDatabase, vg_collate_fn_diff
+        dataset = {
+            k: VGDiffDatabase(**vg_configs[k],
+                              image_size=args.resolution,
+                              prepare_sg_embeds=prepare_sg_embeds,
+                              tokenize_captions=tokenize_captions,
+                              max_samples=args.max_train_samples)
+            for k in ['train', 'val', 'test']}
+    else:
+        raise ValueError(f"Dataset {args.dataset_name} not supported. Supported datasets: clevr, vg")
 
     with accelerator.main_process_first():
         if dataset_type == "clevr":
