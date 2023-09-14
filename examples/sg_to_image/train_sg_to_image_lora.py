@@ -652,7 +652,6 @@ def main():
     )
 
     sg_net = build_sg_encoder(args)
-    sg_net = accelerator.prepare(sg_net)
 
     # freeze parameters of models to save more memory
     unet.requires_grad_(False)
@@ -673,6 +672,7 @@ def main():
     vae.to(accelerator.device, dtype=weight_dtype)
     text_encoder.to(accelerator.device, dtype=weight_dtype)
     sg_net.to(accelerator.device, dtype=weight_dtype)
+    sg_net = accelerator.prepare(sg_net)
 
     unet.requires_grad_(False)
     vae.requires_grad_(False)
