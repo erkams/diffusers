@@ -159,6 +159,14 @@ def parse_args():
             'The latent type to use. Choose between ["image", "depth"].'
         ),
     )
+    parser.add_argument(
+        "--projection",
+        default=False,
+        action="store_true",
+        help=(
+            "Whether to use projection for the graph."
+        ),
+    )
     args = parser.parse_args()
     return args
 
@@ -167,7 +175,7 @@ def build_model(args, device=None):
     with open(args.vocab_json, 'r') as f:
         vocab = json.load(f)
 
-    sg_net = SGNet(vocab)
+    sg_net = SGNet(vocab, projection=args.projection)
     sg_net.to(device)
 
     return sg_net

@@ -44,6 +44,7 @@ class SGNet(nn.Module):
                  use_clip=False,
                  tokenizer=None,
                  text_encoder=None,
+                 projection=False,
                  **kwargs):
         super(SGNet, self).__init__()
 
@@ -56,6 +57,7 @@ class SGNet(nn.Module):
         self.layers = layers
         self.use_box = use_box
         self.use_depth = use_depth
+        self.projection = projection
 
         self.num_objs = len(vocab['object_idx_to_name'])
         self.num_preds = len(vocab['pred_idx_to_name'])
@@ -93,9 +95,9 @@ class SGNet(nn.Module):
         self.gconv_net = GraphTripleConvNet(obj_embed_dim, self.embed_dim, num_layers=layers, hidden_dim=hidden_dim,
                                             pooling='avg',
                                             mlp_normalization='none')
-
-        # self.graph_projection = nn.Linear(embed_dim, embed_dim)
-        # self.graph_projection.apply(_init_weights)
+        if self.projection:
+            self.graph_projection = nn.Linear(embed_dim, embed_dim)
+            self.graph_projection.apply(_init_weights)
 
         self.graph_projection2 = nn.Parameter(torch.randn(1, self.max_obj))
         nn.init.normal_(self.graph_projection2, std=self.max_obj ** -0.5)
@@ -194,7 +196,8 @@ class SGNet(nn.Module):
 
         graph_features = self.encode_sg(triplets, objects, boxes)
 
-        # graph_features = self.graph_projection(graph_embed)
+        if self.projection:
+            graph_features = self.graph_projection(graph_features)
 
         graph_features = self.graph_projection2 @ graph_features
 
