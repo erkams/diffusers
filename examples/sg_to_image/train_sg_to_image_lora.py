@@ -72,18 +72,20 @@ vg_configs = {k: get_vg_config(k) for k in ['train', 'val', 'test']}
 
 def save_model_card(repo_id: str, images=None, base_model=str, dataset_name=str, repo_folder=None):
     img_str = ""
-    for i, image in enumerate(images):
-        image.save(os.path.join(repo_folder, f"image_{i}.png"))
-        img_str += f"![img_{i}](./image_{i}.png)\n"
+    if images is not None:
+        for i, image in enumerate(images):
+            image.save(os.path.join(repo_folder, f"image_{i}.png"))
+            img_str += f"![img_{i}](./image_{i}.png)\n"
 
     yaml = f"""
 ---
 license: creativeml-openrail-m
 base_model: {base_model}
 tags:
+- sg-to-image
+- scene-graph
 - stable-diffusion
 - stable-diffusion-diffusers
-- text-to-image
 - diffusers
 - lora
 inference: true
@@ -189,7 +191,7 @@ def parse_args():
     parser.add_argument(
         "--caption_type",
         type=str,
-        default="full",
+        default="none",
         choices=["none", "const", "triplets", "objects"],
         help=(
             "Whether to disable captions during training. Check if you have something else to condition on, "
@@ -207,6 +209,12 @@ def parse_args():
     )
     parser.add_argument(
         "--num_eval_images",
+        type=int,
+        default=20,
+        help="Number of images that should be generated during evaluation during training.",
+    )
+    parser.add_argument(
+        "--num_test_eval_batches",
         type=int,
         default=20,
         help="Number of images that should be generated during evaluation during training.",
@@ -443,7 +451,13 @@ def parse_args():
         "--shuffle_triplets", action="store_true", help="Whether or not to shuffle the triplets in the training set."
     )
     parser.add_argument("--noise_offset", type=float, default=0, help="The scale of noise offset.")
-
+    parser.add_argument(
+        "--sg_type",
+        type=str,
+        default='simsg',
+        choices=('simsg', 'sgnet'),
+        help="The name of the repository to keep in sync with the local `output_dir`.",
+    )
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if env_local_rank != -1 and env_local_rank != args.local_rank:
@@ -487,7 +501,7 @@ def square_imgs(img: Union[Image.Image, List[Image.Image]], size: int) -> Union[
         return img.resize((size, size), Image.BILINEAR)
 
 
-def make_grid(imgs: List[Image.Image], rows: int, cols: int) -> Image.Image:
+def make_grid(imgs, rows: int, cols: int) -> Image.Image:
     """
     Creates a grid of images.
     Args:
@@ -504,16 +518,63 @@ def make_grid(imgs: List[Image.Image], rows: int, cols: int) -> Image.Image:
     for i, img in enumerate(imgs):
         # convert to PIL if it's a tensor
         if isinstance(img, torch.Tensor):
-            img = transforms.ToPILImage()(img)
-        grid.paste(img.resize((width, height)), box=(width * (i % cols), height * (i // cols)))
+            image = transforms.ToPILImage()(img)
+        else:
+            image = img
+        grid.paste(image.resize((width, height)), box=(width * (i % cols), height * (i // cols)))
     return grid
+
+
+def build_sg_encoder(args, tokenizer=None, text_encoder=None):
+    with open(args.vocab_json, 'r') as f:
+        vocab = json.load(f)
+
+    if args.sg_type == 'simsg':
+        if args.train_sg:
+            from simsg import SGModel
+            kwargs = {
+                'vocab': vocab,
+                'embedding_dim': 1024,
+                'gconv_dim': 1024,
+                'gconv_hidden_dim': 512,
+                'gconv_num_layers': 5,
+                'feats_in_gcn': False,
+                'feats_out_gcn': True,
+                'is_baseline': False,
+                'is_supervised': True,
+                'tokenizer': tokenizer,
+                'text_encoder': text_encoder,
+                'identity': args.identity,
+            }
+            sg_net = SGModel(**kwargs)
+            sg_net.train()
+
+        else:
+            assert args.sg_model_path is not None, "Please specify a path to a pretrained SG model."
+
+            from simsg import SIMSGModel
+            # initializing the SG Model with the pretrained model
+            checkpoint = torch.load(args.sg_model_path)
+            sg_net = SIMSGModel(**checkpoint['model_kwargs'])
+            sg_net.load_state_dict(checkpoint['model_state'])
+            sg_net.enable_embedding(text_encoder=text_encoder, tokenizer=tokenizer)
+            sg_net.image_size = 64
+            sg_net.requires_grad_(False)
+    elif args.sg_type == 'sgnet':
+        sg_net = None
+        pass
+    else:
+        raise ValueError(f"Unknown sg_type: {args.sg_type}! Please choose from ['simsg', 'sgnet'].")
+
+    return sg_net
 
 
 def main():
     args = parse_args()
     assert args.dataset_name is not None, "Need a dataset name."
+    dataset_type = 'clevr' if 'clevr' in args.dataset_name else 'vg'
 
-    logging_dir = os.path.join(args.output_dir, args.logging_dir)
+    # logging_dir = os.path.join(args.output_dir, args.logging_dir)
 
     accelerator_project_config = ProjectConfiguration(total_limit=args.checkpoints_total_limit)
 
@@ -547,7 +608,7 @@ def main():
 
     isc_metric, last_best_isc, isc_cmp = torch_fidelity.KEY_METRIC_ISC_MEAN, 0.0, float.__gt__
 
-    object_detection_metrics = ObjectDetectionMetrics()
+    object_detection_metrics = ObjectDetectionMetrics(dataset_type=dataset_type)
 
     if accelerator.is_local_main_process:
         datasets.utils.logging.set_verbosity_warning()
@@ -584,40 +645,7 @@ def main():
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
     )
 
-    if args.train_sg:
-        from simsg import SGModel
-
-        with open(args.vocab_json, 'r') as f:
-            vocab = json.load(f)
-
-        kwargs = {
-            'vocab': vocab,
-            'embedding_dim': 1024,
-            'gconv_dim': 1024,
-            'gconv_hidden_dim': 512,
-            'gconv_num_layers': 5,
-            'feats_in_gcn': False,
-            'feats_out_gcn': True,
-            'is_baseline': False,
-            'is_supervised': True,
-            'tokenizer': tokenizer,
-            'text_encoder': text_encoder,
-            'identity': args.identity,
-        }
-        sg_net = SGModel(**kwargs)
-        sg_net.train()
-
-    else:
-        assert args.sg_model_path is not None, "Please specify a path to a pretrained SG model."
-
-        from simsg import SIMSGModel
-        # initializing the SG Model with the pretrained model
-        checkpoint = torch.load(args.sg_model_path)
-        sg_net = SIMSGModel(**checkpoint['model_kwargs'])
-        sg_net.load_state_dict(checkpoint['model_state'])
-        sg_net.enable_embedding(text_encoder=text_encoder, tokenizer=tokenizer)
-        sg_net.image_size = 64
-        sg_net.requires_grad_(False)
+    sg_net = build_sg_encoder(args)
 
     # freeze parameters of models to save more memory
     unet.requires_grad_(False)
@@ -787,6 +815,7 @@ def main():
             eps=args.adam_epsilon,
         )
     else:
+        logger.info("train_sg is false. Only LoRA layers are being trained.")
         args.start_lora = 0
         # optimizer = optimizer_cls(
         #     lora_layers.parameters(),
@@ -895,6 +924,7 @@ def main():
         return boxes
 
     def preprocess_train(examples):
+        assert dataset_type == 'clevr', 'Only CLEVR dataset needs preprocess_train!'
         images = [image.convert("RGB") for image in examples[image_column]]
         examples[triplets_column] = [torch.tensor(triplets, device=accelerator.device, dtype=torch.long) for triplets in
                                      examples[triplets_column]]
@@ -907,6 +937,8 @@ def main():
         return examples
 
     def preprocess_val(examples):
+        assert dataset_type == 'clevr', 'Only CLEVR dataset needs preprocess_val!'
+        examples[image_column] = [image.convert("RGB").resize((args.resolution, args.resolution)) for image in examples[image_column]]
         examples[triplets_column] = [torch.tensor(triplets, device=accelerator.device, dtype=torch.long) for triplets in
                                      examples[triplets_column]]
         examples[boxes_column] = [scale_box(boxes) for boxes in examples[boxes_column]]
@@ -916,7 +948,6 @@ def main():
         examples["sg_embeds"] = prepare_sg_embeds(examples, is_train=False)
         return examples
 
-    dataset_type = 'clevr' if 'clevr' in args.dataset_name else 'vg'
     if dataset_type == 'clevr':
         # Downloading and loading a dataset from the hub.
         dataset = load_dataset(
@@ -934,7 +965,8 @@ def main():
             k: VGDiffDatabase(**vg_configs[k],
                               image_size=args.resolution,
                               prepare_sg_embeds=prepare_sg_embeds,
-                              tokenize_captions=tokenize_captions)
+                              tokenize_captions=tokenize_captions,
+                              max_samples=args.max_train_samples)
             for k in ['train', 'val', 'test']}
 
         column_names = dataset[0].keys()
@@ -982,6 +1014,7 @@ def main():
             )
 
     def collate_fn(examples):
+        assert dataset_type == 'clevr', 'Only CLEVR dataset needs collate_fn!'
         pixel_values = torch.stack([example["pixel_values"] for example in examples])
         pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
         input_ids = torch.stack([example["input_ids"] for example in examples])
@@ -1134,12 +1167,15 @@ def main():
                 img_logs = [wandb.Image(img_gt, caption=f"Ground truth")] + img_logs
                 tracker.log({"validation": img_logs})
 
-    def evaluation_step(global_step):
+    def evaluation_step(global_step, test=False):
         nonlocal last_best_metric
         nonlocal last_best_isc
+
+        num_batches = args.num_eval_batches if test else 1
+
         # Calculate FID metric on a subset of validation images
         logger.info(
-            f"Running evaluation... \n Generating {args.num_eval_images} images"
+            f"Running evaluation... \n Generating {num_batches} x {args.num_eval_images} images"
         )
 
         # create pipeline
@@ -1154,96 +1190,126 @@ def main():
 
         # run inference
         generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
-        images = []
-        if dataset_type == "clevr":
-            eval_samples = dataset['val'].with_transform(preprocess_val)[:args.num_eval_images]
-        elif dataset_type == "vg":
-            val_loader = torch.utils.data.DataLoader(dataset['val'],
-                                                     batch_size=args.num_eval_images,
-                                                     shuffle=False,
-                                                     num_workers=4,
-                                                     collate_fn=collate_fn)
-            eval_samples = next(iter(val_loader))
+        if test:
+            dset = dataset['test']
         else:
-            raise ValueError(f"Dataset type {dataset_type} not supported. Please choose between 'clevr' and 'vg'")
+            dset = dataset['val']
 
-        for input_ids, sg_embeds in zip(eval_samples['input_ids'], eval_samples['sg_embeds']):
-            input_ids = input_ids.unsqueeze(0).to(accelerator.device)
-            sg_embeds = sg_embeds.unsqueeze(0).to(accelerator.device)
+        if dataset_type == "clevr":
+            dset = dset.with_transform(preprocess_val)
 
-            images.append(pipeline(prompt_embeds=handle_hidden_states(input_ids=input_ids, condition=sg_embeds),
-                                   height=args.resolution, width=args.resolution, num_inference_steps=30,
-                                   generator=generator).images[0])
+        loader = torch.utils.data.DataLoader(
+            dset,
+            shuffle=True if test else False,
+            collate_fn=collate_fn if dataset_type == "clevr" else vg_collate_fn_diff,
+            batch_size=args.num_eval_images,
+            num_workers=args.dataloader_num_workers,
+        )
+        eval_samples = next(iter(loader))
+        # eval_samples = dataset['val'].with_transform(preprocess_val)[:args.num_eval_images]
 
-        # BOX AND OBJECT DETECTION METRICS
+        is_vals = []
+        fid_vals = []
 
-        box_aps = 0.
-        obj_aps = 0.
-        sum_num_objs = 0.
-        all_boxes_gt = eval_samples['boxes']
-        all_objects_gt = eval_samples['objects']
-        for i in range(len(images)):
-            boxes_gt = all_boxes_gt[i][:-1]
+        for _ in range(num_batches):
+            eval_samples = next(iter(loader))
+            images = []
+            for sample in eval_samples:
+                input_ids = sample['input_ids']
+                sg_embeds = sample['sg_embeds']
+                input_ids = input_ids.unsqueeze(0).to(accelerator.device)
+                sg_embeds = sg_embeds.unsqueeze(0).to(accelerator.device)
 
-            # boxes_gt = boxes_gt * torch.tensor([320, 240, 320, 240]).to(accelerator.device) - torch.tensor(
-            #     [40, 0, 40, 0]).to(accelerator.device)
-            # boxes_gt = boxes_gt.clip(0, 240) / 240
+                images.append(pipeline(prompt_embeds=handle_hidden_states(input_ids=input_ids, condition=sg_embeds),
+                                       height=args.resolution, width=args.resolution, num_inference_steps=30,
+                                       generator=generator).images[0])
+            if not test:
+                # BOX AND OBJECT DETECTION METRICS
 
-            objects_gt = all_objects_gt[i][:-1]
-            ap_box, ap_obj, num_objs = object_detection_metrics.calculate(images[i], boxes_gt, objects_gt)
-            box_aps += ap_box
-            obj_aps += ap_obj
-            sum_num_objs += num_objs
+                box_aps = 0.
+                obj_aps = 0.
+                sum_num_objs = 0.
+                all_boxes_gt = eval_samples[boxes_column]
+                all_objects_gt = eval_samples[objects_column]
+                for i in range(len(images)):
+                    boxes_gt = all_boxes_gt[i][:-1]
 
-        accelerator.log({"mAP_BOX": box_aps / len(images),
-                         "mAP_OBJ": obj_aps / len(images),
-                         "NUM_OBJS": sum_num_objs / len(images)}, step=global_step)
+                    # boxes_gt = boxes_gt * torch.tensor([320, 240, 320, 240]).to(accelerator.device) - torch.tensor(
+                    #     [40, 0, 40, 0]).to(accelerator.device)
+                    # boxes_gt = boxes_gt.clip(0, 240) / 240
 
-        logger.info("***** Eval results *****")
-        logger.info(f"mAP_BOX: {box_aps / len(images)}")
-        logger.info(f"mAP_OBJ: {obj_aps / len(images)}")
-        logger.info(f"NUM_OBJS: {sum_num_objs / len(images)}")
+                    objects_gt = all_objects_gt[i][:-1]
+                    ap_box, ap_obj, num_objs = object_detection_metrics.calculate(images[i], boxes_gt, objects_gt)
+                    box_aps += ap_box
+                    obj_aps += ap_obj
+                    sum_num_objs += num_objs
 
-        # FID AND IS METRICS
-        images_gt = eval_samples[image_column]
-        images_gt = square_imgs(images_gt, args.resolution)
+                accelerator.log({"mAP_BOX": box_aps / len(images),
+                                 "mAP_OBJ": obj_aps / len(images),
+                                 "NUM_OBJS": sum_num_objs / len(images)}, step=global_step)
 
-        metrics = torch_fidelity.calculate_metrics(
-            input1=ListDataset(images),
-            input2=ListDataset(images_gt),
-            cuda=True,
-            isc=True,
-            fid=True,
-            kid=False,
-            verbose=False)
+                logger.info("***** Eval results *****")
+                logger.info(f"mAP_BOX: {box_aps / len(images)}")
+                logger.info(f"mAP_OBJ: {obj_aps / len(images)}")
+                logger.info(f"NUM_OBJS: {sum_num_objs / len(images)}")
 
-        accelerator.log({args.leading_metric.upper(): metrics[leading_metric], "IS": metrics[isc_metric]},
-                        step=global_step)
+                # VISUALIZE
+                images_gt = eval_samples[image_column]
+                if dataset_type == "clevr":
+                    images_gt = square_imgs(images_gt, args.resolution)
 
-        # save the generator if it improved
-        if metric_greater_cmp(metrics[leading_metric], last_best_metric):
-            logger.info(
-                f'Leading metric {args.leading_metric} improved from {last_best_metric} to {metrics[leading_metric]}')
-            last_best_metric = metrics[leading_metric]
+                merged = []
+                for i in range(len(images)):
+                    merged.append(images_gt[i])
+                    merged.append(images[i])
 
-        # save the generator if it improved
-        if metric_greater_cmp(metrics[isc_metric], last_best_isc):
-            logger.info(
-                f'Leading metric IS improved from {last_best_isc} to {metrics[isc_metric]}')
-            last_best_isc = metrics[isc_metric]
+                grid = make_grid(merged, 5, 8)
 
-        # VISUALIZE
-        images_gt = eval_samples[image_column]
-        images_gt = square_imgs(images_gt, args.resolution)
+                accelerator.log({"eval_images": [wandb.Image(grid, caption="Eval images")]})
 
-        merged = []
-        for i in range(len(images)):
-            merged.append(images_gt[i])
-            merged.append(images[i])
+            # FID AND IS METRICS
+            images_gt = eval_samples[image_column]
 
-        grid = make_grid(merged, 5, 8)
+            if dataset_type == "clevr":
+                images_gt = square_imgs(images_gt, args.resolution)
 
-        accelerator.log({"eval_images": [wandb.Image(grid, caption="Eval images")]})
+            metrics = torch_fidelity.calculate_metrics(
+                input1=ListDataset(images),
+                input2=ListDataset(images_gt),
+                cuda=True,
+                isc=True,
+                fid=True,
+                kid=False,
+                verbose=False)
+
+            is_vals.append(metrics[isc_metric])
+            fid_vals.append(metrics[leading_metric])
+
+        metrics = {isc_metric: np.mean(is_vals), leading_metric: np.mean(fid_vals)}
+
+        logger.info(f"*****{' Test' if test else ''} Eval results for STEP {global_step}*****")
+        logger.info(f"ISC: {np.mean(is_vals)} +- {np.std(is_vals)}")
+        logger.info(f"FID: {np.mean(fid_vals)} +- {np.std(fid_vals)}")
+
+        if test:
+            accelerator.log({"TEST_" + leading_metric: metrics[leading_metric],
+                             "TEST_IS": metrics[isc_metric]},
+                            step=global_step)
+        else:
+            accelerator.log({leading_metric: metrics[leading_metric], "IS": metrics[isc_metric]},
+                            step=global_step)
+
+            # save the generator if it improved
+            if metric_greater_cmp(metrics[leading_metric], last_best_metric):
+                logger.info(
+                    f'Leading metric {leading_metric} improved from {last_best_metric} to {metrics[leading_metric]}')
+                last_best_metric = metrics[leading_metric]
+
+            # save the generator if it improved
+            if metric_greater_cmp(metrics[isc_metric], last_best_isc):
+                logger.info(
+                    f'Leading metric IS improved from {last_best_isc} to {metrics[isc_metric]}')
+                last_best_isc = metrics[isc_metric]
 
     # torch.backends.cudnn.enabled = False
     logger.info("***** Running eval check *****")
@@ -1291,25 +1357,34 @@ def main():
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(range(global_step, args.max_train_steps), disable=not accelerator.is_local_main_process)
     progress_bar.set_description("Steps")
-
+    PIXEL_VALUES_KEY = 'pixel_values' if dataset_type == "clevr" else 'image'
     for epoch in range(first_epoch, args.num_train_epochs):
 
         train_loss = 0.0
         for step, batch in enumerate(train_dataloader):
+            if not train_lora and global_step + 1 >= args.start_lora:
+                train_lora = True
+                unet.train()
+                logger.info('Starting LoRA training...')
+                lora_layers, optimizer_lora, lr_scheduler_lora = set_lora_layers()
+                lora_layers, optimizer_lora, lr_scheduler_lora = accelerator.prepare(lora_layers, optimizer_lora,
+                                                                                     lr_scheduler_lora)
+
             # Skip steps until we reach the resumed step
             if args.resume_from_checkpoint and epoch == first_epoch and step < resume_step:
                 if step % args.gradient_accumulation_steps == 0:
                     progress_bar.update(1)
                 continue
 
-            if step == 0:
-                logger.info(f'STEP: {step}')
-                logger.info(f'sg embed shape: {batch["sg_embeds"].shape}')
-                logger.info(f'triplets: {batch["triplets"]}')
+            if accelerator.is_main_process:
+                if step == 0:
+                    logger.info(f'STEP: {step}')
+                    logger.info(f'sg embed shape: {batch["sg_embeds"].shape}')
+                    logger.info(f'triplets: {batch[triplets_column]}')
 
             with accelerator.accumulate(unet):
                 # Convert images to latent space
-                latents = vae.encode(batch["pixel_values"].to(dtype=weight_dtype)).latent_dist.sample()
+                latents = vae.encode(batch[PIXEL_VALUES_KEY].to(dtype=weight_dtype)).latent_dist.sample()
 
                 latents = latents * vae.config.scaling_factor
 
@@ -1399,14 +1474,6 @@ def main():
             progress_bar.set_postfix(**logs)
             accelerator.log(logs, step=global_step)
 
-            if not train_lora and global_step + 1 >= args.start_lora:
-                train_lora = True
-                unet.train()
-                logger.info('Starting LoRA training...')
-                lora_layers, optimizer_lora, lr_scheduler_lora = set_lora_layers()
-                lora_layers, optimizer_lora, lr_scheduler_lora = accelerator.prepare(lora_layers, optimizer_lora,
-                                                                                     lr_scheduler_lora)
-
             if global_step >= args.max_train_steps:
                 break
 
@@ -1417,6 +1484,10 @@ def main():
 
             if epoch % args.validation_epochs == 0:
                 validation_step(epoch)
+
+            if global_step % 5000 == 0:
+                print(f'***EVALUATING ON TEST DATA AT EPOCH {epoch}***')
+                evaluation_step(global_step, test=True)
 
     # Save the lora layers
     accelerator.wait_for_everyone()
