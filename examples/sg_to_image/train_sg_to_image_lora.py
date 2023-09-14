@@ -1185,8 +1185,10 @@ def main():
             for input_ids, sg_embeds in zip(eval_samples["input_ids"], eval_samples["sg_embeds"]):
                 # input_ids = sample['input_ids']
                 # sg_embeds = sample['sg_embeds']
-                input_ids = input_ids.unsqueeze(0).to(accelerator.device)
-                sg_embeds = sg_embeds.unsqueeze(0).to(accelerator.device)
+                print(f'input id shape: {input_ids.shape}')
+                print(f'sg_embeds shape: {sg_embeds.shape}')
+                input_ids = input_ids.to(accelerator.device)
+                sg_embeds = sg_embeds.to(accelerator.device)
 
                 images.append(pipeline(prompt_embeds=handle_hidden_states(input_ids=input_ids, condition=sg_embeds),
                                        height=args.resolution, width=args.resolution, num_inference_steps=30,
