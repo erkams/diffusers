@@ -44,7 +44,7 @@ from transformers import CLIPTextModel, CLIPTokenizer
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline, UNet2DConditionModel
 from diffusers.loaders import AttnProcsLayers
-from diffusers.models.attention_processor import LoRAAttnProcessor2_0
+from diffusers.models.attention_processor import LoRAAttnProcessor
 from diffusers.optimization import get_scheduler
 from diffusers.utils import check_min_version, is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
@@ -671,7 +671,7 @@ def main():
     vae.to(accelerator.device, dtype=weight_dtype)
     text_encoder.to(accelerator.device, dtype=weight_dtype)
     sg_net.to(accelerator.device, dtype=weight_dtype)
-    sg_net = accelerator.prepare(sg_net)
+    # sg_net = accelerator.prepare(sg_net)
 
     unet.requires_grad_(False)
     vae.requires_grad_(False)
@@ -729,9 +729,8 @@ def main():
                 block_id = int(name[len("down_blocks.")])
                 hidden_size = unet.config.block_out_channels[block_id]
 
-            lora_attn_procs[name] = LoRAAttnProcessor2_0(hidden_size=hidden_size,
-                                                         cross_attention_dim=cross_attention_dim,
-                                                         rank=args.lora_rank)
+            lora_attn_procs[name] = LoRAAttnProcessor(hidden_size=hidden_size, cross_attention_dim=cross_attention_dim,
+                                                      rank=args.lora_rank)
 
         unet.set_attn_processor(lora_attn_procs)
 
@@ -748,10 +747,10 @@ def main():
             else:
                 raise ValueError("xformers is not available. Make sure it is installed correctly")
 
-        lora_layers = AttnProcsLayers(unet.attn_processors)
+        lora_layers_ = AttnProcsLayers(unet.attn_processors)
 
         optimizer = optimizer_cls(
-            lora_layers.parameters(),
+            lora_layers_.parameters(),
             lr=args.learning_rate_lora,
             betas=(args.adam_beta1, args.adam_beta2),
             weight_decay=args.adam_weight_decay,
@@ -765,7 +764,7 @@ def main():
             num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
         )
 
-        return lora_layers, optimizer, lr_scheduler
+        return lora_layers_, optimizer, lr_scheduler
 
     def compute_snr(timesteps):
         """
@@ -1282,13 +1281,13 @@ def main():
                     f'Leading metric IS improved from {last_best_isc} to {metrics[isc_metric]}')
                 last_best_isc = metrics[isc_metric]
 
-    # # torch.backends.cudnn.enabled = False
-    # logger.info("***** Running eval check *****")
-    # evaluation_step(0)
-    # logger.info("***** Running validation check *****")
-    # validation_step(0)
-    # logger.info("***** Running test check *****")
-    # evaluation_step(0, test=True)
+    # torch.backends.cudnn.enabled = False
+    logger.info("***** Running eval check *****")
+    evaluation_step(0)
+    logger.info("***** Running validation check *****")
+    validation_step(0)
+    logger.info("***** Running test check *****")
+    evaluation_step(0, test=True)
 
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
@@ -1390,8 +1389,9 @@ def main():
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
                 # Predict the noise residual and compute loss
-                model_pred = unet(noisy_latents, timesteps, handle_hidden_states(input_ids=batch["input_ids"],
-                                                                                 condition=batch['sg_embeds'])).sample
+                with accelerator.autocast():
+                    model_pred = unet(noisy_latents, timesteps, handle_hidden_states(input_ids=batch["input_ids"],
+                                                                                     condition=batch['sg_embeds'])).sample
 
                 if args.snr_gamma is None:
                     loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
