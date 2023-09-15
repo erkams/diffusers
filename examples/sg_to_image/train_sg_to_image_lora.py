@@ -966,7 +966,7 @@ def main():
 
     def collate_fn(examples):
         assert dataset_type == 'clevr', 'Only CLEVR dataset needs collate_fn!'
-        pixel_values = torch.stack(examples["pixel_values"])
+        pixel_values = torch.stack([example["pixel_values"] for example in examples])
         pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
         input_ids = torch.stack([example["input_ids"] for example in examples])
         sg_embeds = torch.stack([example["sg_embeds"] for example in examples])
@@ -1309,10 +1309,10 @@ def main():
                 last_best_isc = metrics[isc_metric]
 
     # torch.backends.cudnn.enabled = False
-    # logger.info("***** Running eval check *****")
-    # evaluation_step(0)
-    # logger.info("***** Running validation check *****")
-    # validation_step(0)
+    logger.info("***** Running eval check *****")
+    evaluation_step(0)
+    logger.info("***** Running validation check *****")
+    validation_step(0)
     # logger.info("***** Running test check *****")
     # evaluation_step(0, test=True)
 
