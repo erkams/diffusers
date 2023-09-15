@@ -1380,7 +1380,6 @@ def main():
                 if step == 0:
                     logger.info(f'STEP: {step}')
                     logger.info(f'sg embed shape: {batch["sg_embeds"].shape}')
-                    logger.info(f'triplets: {batch[triplets_column]}')
 
             with accelerator.accumulate(unet):
                 # Convert images to latent space
