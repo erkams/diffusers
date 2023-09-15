@@ -1150,15 +1150,6 @@ def main():
                 elif isinstance(img_gt, list):  # CLEVR?
                     img_gt = img_gt[0]
 
-                sizes = img_gt.size
-                # calculate the crop box for center crop
-                w = sizes[0]
-                h = sizes[1]
-                if w > h:
-                    img_gt = img_gt.crop(((w - h) // 2, 0, (w + h) // 2, h))
-                elif h > w:
-                    img_gt = img_gt.crop((0, (h - w) // 2, w, (h + w) // 2))
-
                 img_gt = img_gt.resize((args.resolution, args.resolution))
 
                 img_logs = [
