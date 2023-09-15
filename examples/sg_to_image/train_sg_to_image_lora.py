@@ -665,7 +665,7 @@ def main():
     vae.to(accelerator.device, dtype=weight_dtype)
     text_encoder.to(accelerator.device, dtype=weight_dtype)
     sg_net.to(accelerator.device)
-    # sg_net = accelerator.prepare(sg_net)
+    sg_net = accelerator.prepare(sg_net)
 
     unet.requires_grad_(False)
     vae.requires_grad_(False)
@@ -1308,7 +1308,7 @@ def main():
                 logger.info(
                     f'Leading metric {leading_metric} improved from {last_best_metric} to {metrics[leading_metric]}')
                 last_best_metric = metrics[leading_metric]
-                torch.save(sg_net.state_dict(), f'./sg_encoder.pt')
+                torch.save(sg_net.state_dict(), f'{args.output_dir}/sg_encoder.pt')
 
             # save the generator if it improved
             if metric_greater_cmp(metrics[isc_metric], last_best_isc):
