@@ -966,21 +966,21 @@ def main():
 
     def collate_fn(examples):
         assert dataset_type == 'clevr', 'Only CLEVR dataset needs collate_fn!'
-        pixel_values = torch.stack([example["pixel_values"] for example in examples])
+        pixel_values = torch.stack(examples["pixel_values"])
         pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
-        input_ids = torch.stack([example["input_ids"] for example in examples])
-        sg_embeds = torch.stack([example["sg_embeds"] for example in examples])
-        return {"pixel_values": pixel_values, "input_ids": input_ids, "sg_embeds": sg_embeds,
-                "prompt": examples[0][caption_column],
-                "triplets": examples[0][triplets_column], "boxes": examples[0][boxes_column]}
+
+        return {"pixel_values": pixel_values,
+                "input_ids": examples["input_ids"],
+                "sg_embeds": examples['sg_embeds'],
+                "prompt": examples[caption_column],
+                "triplets": examples[triplets_column],
+                "boxes": examples[boxes_column],
+                "objects": examples[objects_column],
+                }
 
     def val_collate_fn(examples):
         assert dataset_type == 'clevr', 'Only CLEVR dataset needs collate_fn!'
-        input_ids = torch.stack([example["input_ids"] for example in examples])
-        sg_embeds = torch.stack([example["sg_embeds"] for example in examples])
-        return {"input_ids": input_ids, "sg_embeds": sg_embeds,
-                "prompt": examples[0][caption_column],
-                "triplets": examples[0][triplets_column], "boxes": examples[0][boxes_column]}
+        return examples
 
     if dataset_type == 'clevr':
         # Downloading and loading a dataset from the hub.
