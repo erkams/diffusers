@@ -968,19 +968,33 @@ def main():
         assert dataset_type == 'clevr', 'Only CLEVR dataset needs collate_fn!'
         pixel_values = torch.stack(examples["pixel_values"])
         pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
+        input_ids = torch.stack([example["input_ids"] for example in examples])
+        sg_embeds = torch.stack([example["sg_embeds"] for example in examples])
 
         return {"pixel_values": pixel_values,
-                "input_ids": examples["input_ids"],
-                "sg_embeds": examples['sg_embeds'],
-                "prompt": examples[caption_column],
-                "triplets": examples[triplets_column],
-                "boxes": examples[boxes_column],
-                "objects": examples[objects_column],
+                "input_ids": input_ids,
+                "sg_embeds": sg_embeds,
                 }
 
     def val_collate_fn(examples):
         assert dataset_type == 'clevr', 'Only CLEVR dataset needs collate_fn!'
-        return examples
+        all_images = [example[image_column] for example in examples]
+
+        input_ids = torch.stack([example["input_ids"] for example in examples])
+        sg_embeds = torch.stack([example["sg_embeds"] for example in examples])
+
+        boxes = [example[boxes_column] for example in examples]
+        objects = [example[objects_column] for example in examples]
+        triplets = [example[triplets_column] for example in examples]
+
+        return {
+                "image": all_images,
+                "input_ids": input_ids,
+                "sg_embeds": sg_embeds,
+                "boxes": boxes,
+                "objects": objects,
+                "triplets": triplets,
+                }
 
     if dataset_type == 'clevr':
         # Downloading and loading a dataset from the hub.
@@ -1185,7 +1199,7 @@ def main():
             batch_size=args.num_eval_images,
             num_workers=args.dataloader_num_workers,
         )
-        eval_samples = next(iter(loader))
+        # eval_samples = next(iter(loader))
         # eval_samples = dataset['val'].with_transform(preprocess_val)[:args.num_eval_images]
 
         is_vals = []
