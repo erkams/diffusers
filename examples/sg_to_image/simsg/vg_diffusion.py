@@ -29,8 +29,10 @@ class VGDiffDatabase(Dataset):
         self.prepare_sg_embeds = prepare_sg_embeds
         self.tokenize_captions = tokenize_captions
         self.is_train = True if 'train' in h5_path else False
-
-        transform = [Resize(self.image_size), transforms.ToTensor(), transforms.Normalize(0.5, 0.5)]  # augmentation
+        if self.is_train:
+            transform = [Resize(self.image_size), transforms.ToTensor(), transforms.Normalize(0.5, 0.5)]  # augmentation
+        else:
+            transform = [Resize(self.image_size), transforms.ToTensor()]
         self.transform = transforms.Compose(transform)
 
         self.data = {}
