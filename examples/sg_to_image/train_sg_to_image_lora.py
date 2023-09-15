@@ -974,6 +974,14 @@ def main():
                 "prompt": examples[0][caption_column],
                 "triplets": examples[0][triplets_column], "boxes": examples[0][boxes_column]}
 
+    def val_collate_fn(examples):
+        assert dataset_type == 'clevr', 'Only CLEVR dataset needs collate_fn!'
+        input_ids = torch.stack([example["input_ids"] for example in examples])
+        sg_embeds = torch.stack([example["sg_embeds"] for example in examples])
+        return {"input_ids": input_ids, "sg_embeds": sg_embeds,
+                "prompt": examples[0][caption_column],
+                "triplets": examples[0][triplets_column], "boxes": examples[0][boxes_column]}
+
     if dataset_type == 'clevr':
         # Downloading and loading a dataset from the hub.
         dataset = load_dataset(
@@ -1173,7 +1181,7 @@ def main():
         loader = torch.utils.data.DataLoader(
             dset,
             shuffle=True if test else False,
-            collate_fn=collate_fn,
+            collate_fn=val_collate_fn if dataset_type=='clevr' else collate_fn,
             batch_size=args.num_eval_images,
             num_workers=args.dataloader_num_workers,
         )
