@@ -39,6 +39,7 @@ from huggingface_hub import create_repo, upload_folder
 from packaging import version
 from torchvision import transforms
 from tqdm.auto import tqdm
+
 from transformers import CLIPTextModel, CLIPTokenizer
 
 import diffusers
@@ -1200,7 +1201,7 @@ def main():
         for _ in range(num_batches):
             eval_samples = next(iter(loader))
             images = []
-            for input_ids, sg_embeds in zip(eval_samples["input_ids"], eval_samples["sg_embeds"]):
+            for input_ids, sg_embeds in tqdm(zip(eval_samples["input_ids"], eval_samples["sg_embeds"]), total=len(eval_samples["input_ids"])):
                 # input_ids = sample['input_ids']
                 # sg_embeds = sample['sg_embeds']
                 # print(f'input id shape: {input_ids.shape}')
