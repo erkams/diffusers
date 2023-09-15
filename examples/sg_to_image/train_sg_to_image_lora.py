@@ -1181,7 +1181,7 @@ def main():
         loader = torch.utils.data.DataLoader(
             dset,
             shuffle=True if test else False,
-            collate_fn=val_collate_fn if dataset_type=='clevr' else collate_fn,
+            collate_fn=val_collate_fn if dataset_type == 'clevr' else collate_fn,
             batch_size=args.num_eval_images,
             num_workers=args.dataloader_num_workers,
         )
