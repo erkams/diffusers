@@ -528,7 +528,6 @@ def make_grid(imgs, rows: int, cols: int) -> Image.Image:
 def build_sg_encoder(args, tokenizer=None, text_encoder=None):
     with open(args.vocab_json, 'r') as f:
         vocab = json.load(f)
-
     if args.sg_type == 'simsg':
         if args.train_sg:
             from simsg import SGModel
@@ -1185,8 +1184,8 @@ def main():
                 # sg_embeds = sample['sg_embeds']
                 print(f'input id shape: {input_ids.shape}')
                 print(f'sg_embeds shape: {sg_embeds.shape}')
-                input_ids = input_ids.to(accelerator.device)
-                sg_embeds = sg_embeds.to(accelerator.device)
+                input_ids = input_ids.unsqueeze(0).to(accelerator.device)
+                sg_embeds = sg_embeds.unsqueeze(0).to(accelerator.device)
 
                 images.append(pipeline(prompt_embeds=handle_hidden_states(input_ids=input_ids, condition=sg_embeds),
                                        height=args.resolution, width=args.resolution, num_inference_steps=30,
