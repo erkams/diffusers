@@ -222,7 +222,7 @@ def parse_args():
     parser.add_argument(
         "--validation_epochs",
         type=int,
-        default=1,
+        default=2,
         help=(
             "Run fine-tuning validation every X epochs. The validation process consists of running the prompt"
             " `args.validation_prompt` multiple times: `args.num_validation_images`."
@@ -1450,7 +1450,7 @@ def main():
                 break
 
         if accelerator.is_main_process:
-            if epoch % (4 * args.validation_epochs) == 0:
+            if epoch % (8 * args.validation_epochs) == 0:
                 print(f'***EVALUATION AT EPOCH {epoch}***')
                 evaluation_step(global_step)
 
