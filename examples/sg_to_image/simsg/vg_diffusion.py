@@ -149,6 +149,7 @@ def vg_collate_fn_diff(batch):
         all_boxes.append(boxes)
         all_triples.append(triples)
         all_object_str.append(objects_str)
+        print(f'sg_embeds.shape: {sg_embeds.shape}')
         all_sg_embeds.append(sg_embeds)
         all_input_ids.append(input_ids)
 
