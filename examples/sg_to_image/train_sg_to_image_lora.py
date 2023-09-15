@@ -1089,6 +1089,8 @@ def main():
 
     def validation_step(epoch):
         # Prepare validation sample
+        sg_net.eval()
+
         val_sample = dataset['val'][0]
         val_sample[triplets_column] = [torch.tensor(val_sample[triplets_column], device=accelerator.device,
                                                     dtype=torch.long)]
@@ -1099,11 +1101,12 @@ def main():
             val_sample[boxes_column] = [scale_box(val_sample[boxes_column])]
         else:
             val_sample[boxes_column] = [torch.tensor(val_sample[boxes_column], device=accelerator.device)]
-        val_sample['sg_embeds'] = prepare_sg_embeds(val_sample)
+        with torch.no_grad():
+            val_sample['sg_embeds'] = prepare_sg_embeds(val_sample)
         val_sample["input_ids"] = tokenize_captions(val_sample)
 
         validation_prompt = get_caption(val_sample[caption_column][0])
-
+        sg_net.train()
         logger.info(
             f"Running validation... \n Generating {args.num_validation_images} images with prompt:"
             f" {validation_prompt}."
@@ -1174,6 +1177,7 @@ def main():
         )
         pipeline = pipeline.to(accelerator.device)
         pipeline.set_progress_bar_config(disable=True)
+        sg_net.eval()
 
         # run inference
         generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
@@ -1199,7 +1203,8 @@ def main():
         fid_vals = []
 
         for _ in range(num_batches):
-            eval_samples = next(iter(loader))
+            with torch.no_grad():
+                eval_samples = next(iter(loader))
             images = []
             for input_ids, sg_embeds in tqdm(zip(eval_samples["input_ids"], eval_samples["sg_embeds"]), total=len(eval_samples["input_ids"])):
                 # input_ids = sample['input_ids']
@@ -1300,6 +1305,8 @@ def main():
                 logger.info(
                     f'IS metric is improved from {last_best_isc} to {metrics[isc_metric]}')
                 last_best_isc = metrics[isc_metric]
+
+        sg_net.train()
 
     # torch.backends.cudnn.enabled = False
     logger.info("***** Running eval check *****")
