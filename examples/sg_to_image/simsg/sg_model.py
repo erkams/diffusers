@@ -169,13 +169,13 @@ class SGModel(nn.Module):
         # keep_image_idx = torch.ones_like(objs.unsqueeze(1), dtype=torch.float)
 
         def embed_text(text):
-            # output shape: (num_objs, 10)
+            # output shape: (num_objs, 77)
             tokens = self.tokenizer(
                 text, max_length=self.tokenizer.model_max_length, padding="max_length", truncation=True,
                 return_tensors="pt"
             ).input_ids.to('cuda:0')
 
-            # output shape: (num_objs, 10, 1024)
+            # output shape: (num_objs, 77, 1024)
             vecs = self.text_encoder(tokens)[0]
 
             # take average of the tokens to get a overall 1-dim embedding for each objects (num_objs, 1024)
@@ -189,7 +189,7 @@ class SGModel(nn.Module):
             obj_to_img = torch.zeros(num_objs, dtype=objs.dtype, device=objs.device)
 
         if not (self.is_baseline or self.is_supervised):
-
+            return ValueError("Not implemented")
             box_ones = torch.ones([num_objs, 1], dtype=boxes_gt.dtype, device=boxes_gt.device)
             box_keep, _ = self.prepare_keep_idx(True, box_ones, batch_size, obj_to_img,
                                                          keep_box_idx, keep_feat_idx)
@@ -225,7 +225,7 @@ class SGModel(nn.Module):
         if self.identity:
             obj_vecs = obj_vecs + obj_vecs_
         
-        obj_vecs = F.pad(obj_vecs, pad=(0, 0, max_length[0] - obj_vecs.size(0), 0))
+        # obj_vecs = F.pad(obj_vecs, pad=(0, 0, max_length[0] - obj_vecs.size(0), 0))
 
         # if return_preds:
         #     pred_vecs = F.pad(pred_vecs, pad=(0, 0, max_length[1] - pred_vecs.size(0), 0))

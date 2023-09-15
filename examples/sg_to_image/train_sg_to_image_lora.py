@@ -222,7 +222,7 @@ def parse_args():
     parser.add_argument(
         "--validation_epochs",
         type=int,
-        default=2,
+        default=1,
         help=(
             "Run fine-tuning validation every X epochs. The validation process consists of running the prompt"
             " `args.validation_prompt` multiple times: `args.num_validation_images`."
@@ -253,7 +253,7 @@ def parse_args():
     parser.add_argument(
         "--resolution",
         type=int,
-        default=512,
+        default=256,
         help=(
             "The resolution for input images, all the images in the train/validation dataset will be resized to this"
             " resolution"
@@ -336,7 +336,7 @@ def parse_args():
     parser.add_argument(
         "--snr_gamma",
         type=float,
-        default=None,
+        default=5.0,
         help="SNR weighting gamma to be used if rebalancing the loss. Recommended value is 5.0. "
              "More details here: https://arxiv.org/abs/2303.09556.",
     )
@@ -367,7 +367,7 @@ def parse_args():
         "--identity", action="store_true", help="Whether or not to add identity to the sg embed"
     )
     parser.add_argument(
-        "--start_lora", type=int, default=500, help="Number of steps after to start the lora training."
+        "--start_lora", type=int, default=0, help="Number of steps after to start the lora training."
     )
     parser.add_argument("--vocab_json", type=str, default="mnt/students/vocab.json", help="The path to the vocab file.")
 
@@ -456,7 +456,7 @@ def parse_args():
         type=str,
         default='simsg',
         choices=('simsg', 'sgnet'),
-        help="The name of the repository to keep in sync with the local `output_dir`.",
+        help="Type of sg encoder.",
     )
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
@@ -464,15 +464,10 @@ def parse_args():
         args.local_rank = env_local_rank
 
     # Sanity checks
-    if args.dataset_name is None and args.train_data_dir is None:
-        raise ValueError("Need either a dataset name or a training folder.")
+    if args.dataset_name is None:
+        raise ValueError("Need a dataset name.")
 
     return args
-
-
-DATASET_NAME_MAPPING = {
-    "lambdalabs/pokemon-blip-captions": ("image", "text"),
-}
 
 
 def square_imgs(img: Union[Image.Image, List[Image.Image]], size: int) -> Union[Image.Image, List[Image.Image]]:
@@ -570,7 +565,6 @@ def build_sg_encoder(args, tokenizer=None, text_encoder=None):
 
 def main():
     args = parse_args()
-    assert args.dataset_name is not None, "Need a dataset name."
     dataset_type = 'clevr' if 'clevr' in args.dataset_name else 'vg'
 
     image_column = args.image_column
@@ -838,43 +832,54 @@ def main():
     # download the dataset.
 
     def prepare_sg_embeds(examples, is_train=True):
-        max_length = (8, 21)
-        sg_embeds = []
+        if dataset_type == 'clevr':
+            max_length = (8, 21)
+        else:
+            max_length = (77, 21)
+
+        num_objs_per_image = []
+        num_triplets_per_image = []
+        obj_offset = 0
+        all_objects = []
+        all_triplets = []
+        all_boxes = []
         for triplets, boxes, objects in zip(examples[triplets_column], examples[boxes_column],
                                             examples[objects_column]):
+            num_objs, num_triplets = objects.shape[0], triplets.shape[0]
 
-            triplets = triplets.to(accelerator.device)
-            boxes = boxes.to(accelerator.device)
-            objects = objects.to(accelerator.device)
+            tr = triplets.clone()
+            tr[:, 0] += obj_offset
+            tr[:, 2] += obj_offset
 
-            if is_train:
-                random.shuffle(triplets)
-            if args.train_sg:
-                embed = sg_net(triplets, objects, boxes, max_length=max_length, batch_size=args.train_batch_size)
-            else:
-                embed = sg_net.encode_sg(triplets, objects, boxes, max_length=max_length,
-                                         batch_size=args.train_batch_size)
+            all_triplets.append(tr)
+            all_boxes.append(boxes)
+            all_objects.append(objects)
 
-            sg_embeds.append(embed)
+            num_objs_per_image.append(num_objs)
+            num_triplets_per_image.append(num_triplets)
 
-        sg_embed = torch.stack(sg_embeds, dim=0)
-        if args.cond_place == 'latent':
-            # here 2 is an hyperparameter
-            out_shape = (1, 2, args.resolution / vae.config.scaling_factor, args.resolution / vae.config.scaling_factor)
-            # resize vector with interpolation
-            sg_embed = F.interpolate(sg_embed, size=(out_shape[-2], out_shape[-1]), mode='bilinear',
-                                     align_corners=False)
-            sg_embed = sg_embed.squeeze(0)
-            sg_embed = torch.cat([sg_embed] * out_shape[1], dim=0)
+            obj_offset += num_objs
 
-        elif args.cond_place == 'attn':
-            out_shape = (1, sum(max_length), 1024)
-            # zeros = torch.zeros_like(sg_embed)
-            # pad = torch.cat([zeros] * 3, dim=-1) # hardcoded for 3 now = out_shape[2]//sg_embed.shape[2] - 1
-            # sg_embed = torch.cat([sg_embed, pad], dim=-1)
-            # sg_embed = sg_embed.repeat(1, 1, out_shape[2]//sg_embed.shape[2])
+        all_objects = torch.cat(all_objects, dim=0).to(accelerator.device)
+        all_triplets = torch.cat(all_triplets, dim=0).to(accelerator.device)
+        all_boxes = torch.cat(all_boxes, dim=0).to(accelerator.device)
 
-        return sg_embed
+        if args.train_sg:
+            embed = sg_net(all_triplets, all_objects, all_boxes, max_length=max_length,
+                           batch_size=args.train_batch_size)
+        else:
+            embed = sg_net.encode_sg(all_triplets, all_objects, all_boxes, max_length=max_length,
+                                     batch_size=args.train_batch_size)
+
+        embeds = torch.split(embed, num_objs_per_image, dim=0)
+
+        # pad embeds to max length
+        embeds = [F.pad(e, (0, 0, 0, max_length[0] - e.shape[0])) for e in embeds]
+        embeds = torch.stack(embeds, dim=0)
+
+        assert embeds.shape == (len(examples[objects_column]), max_length[0], 1024)
+
+        return embeds
 
     def get_caption(caption):
         if args.caption_type == 'const':
@@ -954,7 +959,8 @@ def main():
 
     def preprocess_val(examples):
         assert dataset_type == 'clevr', 'Only CLEVR dataset needs preprocess_val!'
-        examples[image_column] = [image.convert("RGB").resize((args.resolution, args.resolution)) for image in examples[image_column]]
+        examples[image_column] = [image.convert("RGB").resize((args.resolution, args.resolution)) for image in
+                                  examples[image_column]]
         examples[triplets_column] = [torch.tensor(triplets, device=accelerator.device, dtype=torch.long) for triplets in
                                      examples[triplets_column]]
         examples[boxes_column] = [scale_box(boxes) for boxes in examples[boxes_column]]
@@ -970,7 +976,9 @@ def main():
         pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
         input_ids = torch.stack([example["input_ids"] for example in examples])
         sg_embeds = torch.stack([example["sg_embeds"] for example in examples])
-
+        print(f'sg_embeds.shape: {sg_embeds.shape}')
+        print(f'input_ids.shape: {input_ids.shape}')
+        print(f'pixel_values.shape: {pixel_values.shape}')
         return {"pixel_values": pixel_values,
                 "input_ids": input_ids,
                 "sg_embeds": sg_embeds,
@@ -988,13 +996,13 @@ def main():
         triplets = [example[triplets_column] for example in examples]
 
         return {
-                "image": all_images,
-                "input_ids": input_ids,
-                "sg_embeds": sg_embeds,
-                "boxes": boxes,
-                "objects": objects,
-                "triplets": triplets,
-                }
+            "image": all_images,
+            "input_ids": input_ids,
+            "sg_embeds": sg_embeds,
+            "boxes": boxes,
+            "objects": objects,
+            "triplets": triplets,
+        }
 
     if dataset_type == 'clevr':
         # Downloading and loading a dataset from the hub.
@@ -1102,7 +1110,6 @@ def main():
 
         validation_prompt = get_caption(val_sample[caption_column][0])
 
-
         logger.info(
             f"Running validation... \n Generating {args.num_validation_images} images with prompt:"
             f" {validation_prompt}."
@@ -1161,11 +1168,12 @@ def main():
                 img_logs = [wandb.Image(img_gt, caption=f"Ground truth")] + img_logs
                 tracker.log({"validation": img_logs})
 
-    def evaluation_step(global_step, test=False):
+    def evaluation_step(global_step, test=False, num_batches=None):
         nonlocal last_best_metric
         nonlocal last_best_isc
 
-        num_batches = args.num_eval_batches if test else 1
+        if num_batches is None:
+            num_batches = args.num_eval_batches if test else 1
 
         # Calculate FID metric on a subset of validation images
         logger.info(
@@ -1217,7 +1225,7 @@ def main():
                 sg_embeds = sg_embeds.unsqueeze(0).to(accelerator.device)
                 with accelerator.autocast():
                     images.append(pipeline(prompt_embeds=handle_hidden_states(input_ids=input_ids, condition=sg_embeds),
-                                           height=args.resolution, width=args.resolution, num_inference_steps=30,
+                                           height=args.resolution, width=args.resolution, num_inference_steps=100,
                                            generator=generator).images[0])
             if not test:
                 # BOX AND OBJECT DETECTION METRICS
@@ -1313,8 +1321,8 @@ def main():
     evaluation_step(0)
     logger.info("***** Running validation check *****")
     validation_step(0)
-    # logger.info("***** Running test check *****")
-    # evaluation_step(0, test=True)
+    logger.info("***** Running test check *****")
+    evaluation_step(0, test=True, num_batches=2)
 
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
@@ -1418,7 +1426,8 @@ def main():
                 # Predict the noise residual and compute loss
                 with accelerator.autocast():
                     model_pred = unet(noisy_latents, timesteps, handle_hidden_states(input_ids=batch["input_ids"],
-                                                                                     condition=batch['sg_embeds'])).sample
+                                                                                     condition=batch[
+                                                                                         'sg_embeds'])).sample
 
                 if args.snr_gamma is None:
                     loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
@@ -1478,14 +1487,14 @@ def main():
                 break
 
         if accelerator.is_main_process:
-            if epoch % (8 * args.validation_epochs) == 0:
+            if global_step % (200 * args.validation_epochs) == 0 and global_step % 2000 != 0:
                 print(f'***EVALUATION AT EPOCH {epoch}***')
                 evaluation_step(global_step)
 
-            if epoch % args.validation_epochs == 0:
+            if global_step % (500 * args.validation_epochs) == 0:
                 validation_step(epoch)
 
-            if global_step % 5000 == 0 and global_step > 0:
+            if global_step % 2000 == 0:
                 print(f'***EVALUATING ON TEST DATA AT EPOCH {epoch}***')
                 evaluation_step(global_step, test=True)
 
