@@ -1064,10 +1064,13 @@ def main():
         val_sample = dataset['val'][0]
         val_sample[triplets_column] = [torch.tensor(val_sample[triplets_column], device=accelerator.device,
                                                     dtype=torch.long)]
-        val_sample[boxes_column] = [scale_box(val_sample[boxes_column])]
         val_sample[objects_column] = [torch.tensor(val_sample[objects_column], device=accelerator.device,
                                                    dtype=torch.long)]
         val_sample[caption_column] = [val_sample[caption_column]]
+        if dataset_type == 'clevr':
+            val_sample[boxes_column] = [scale_box(val_sample[boxes_column])]
+        else:
+            val_sample[boxes_column] = [torch.tensor(val_sample[boxes_column], device=accelerator.device)]
         val_sample['sg_embeds'] = prepare_sg_embeds(val_sample)
         val_sample["input_ids"] = tokenize_captions(val_sample)
 
