@@ -1269,7 +1269,7 @@ def main():
 
                 grid = make_grid(merged, 5, 8)
 
-                accelerator.log({"eval_images": [wandb.Image(grid, caption="Eval images")]})
+                accelerator.log({"eval_images": [wandb.Image(grid, caption="Eval images")]}, step=global_step)
 
             # FID AND IS METRICS
             images_gt = eval_samples[image_column]
