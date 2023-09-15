@@ -1282,12 +1282,12 @@ def main():
                 last_best_isc = metrics[isc_metric]
 
     # torch.backends.cudnn.enabled = False
-    logger.info("***** Running eval check *****")
-    evaluation_step(0)
-    logger.info("***** Running validation check *****")
-    validation_step(0)
-    logger.info("***** Running test check *****")
-    evaluation_step(0, test=True)
+    # logger.info("***** Running eval check *****")
+    # evaluation_step(0)
+    # logger.info("***** Running validation check *****")
+    # validation_step(0)
+    # logger.info("***** Running test check *****")
+    # evaluation_step(0, test=True)
 
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
