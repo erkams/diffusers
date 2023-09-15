@@ -957,7 +957,7 @@ def main():
         examples[boxes_column] = [scale_box(boxes) for boxes in examples[boxes_column]]
         examples[objects_column] = [torch.tensor(objects, device=accelerator.device, dtype=torch.long) for objects in
                                     examples[objects_column]]
-        examples["input_ids"] = tokenize_captions(examples, is_train=False).to(accelerator.device)
+        examples["input_ids"] = tokenize_captions(examples, is_train=False)
         examples["sg_embeds"] = prepare_sg_embeds(examples, is_train=False)
         return examples
 
@@ -980,7 +980,7 @@ def main():
             keep_in_memory=True
         )
     elif dataset_type == 'vg':
-        from simsg import VGDiffDatabase, vg_collate_fn_diff
+        from simsg import VGDiffDatabase, get_collate_fn
         dataset = {
             k: VGDiffDatabase(**vg_configs[k],
                               image_size=args.resolution,
@@ -999,7 +999,7 @@ def main():
             train_dataset = dataset["train"].with_transform(preprocess_train)
         elif dataset_type == "vg":
             train_dataset = dataset["train"]
-            collate_fn = vg_collate_fn_diff
+            collate_fn = get_collate_fn(prepare_sg_embeds, tokenize_captions)
 
     # DataLoaders creation:
     train_dataloader = torch.utils.data.DataLoader(
@@ -1063,19 +1063,17 @@ def main():
     def validation_step(epoch):
         # Prepare validation sample
         val_sample = dataset['val'][0]
-        if dataset_type == "clevr":
-            val_sample[triplets_column] = [torch.tensor(val_sample[triplets_column], device=accelerator.device,
-                                                        dtype=torch.long)]
-            val_sample[boxes_column] = [scale_box(val_sample[boxes_column])]
-            val_sample[objects_column] = [torch.tensor(val_sample[objects_column], device=accelerator.device,
-                                                       dtype=torch.long)]
-            val_sample[caption_column] = [val_sample[caption_column]]
-            val_sample['sg_embeds'] = prepare_sg_embeds(val_sample)
-            val_sample["input_ids"] = tokenize_captions(val_sample).to(accelerator.device)
+        val_sample[triplets_column] = [torch.tensor(val_sample[triplets_column], device=accelerator.device,
+                                                    dtype=torch.long)]
+        val_sample[boxes_column] = [scale_box(val_sample[boxes_column])]
+        val_sample[objects_column] = [torch.tensor(val_sample[objects_column], device=accelerator.device,
+                                                   dtype=torch.long)]
+        val_sample[caption_column] = [val_sample[caption_column]]
+        val_sample['sg_embeds'] = prepare_sg_embeds(val_sample)
+        val_sample["input_ids"] = tokenize_captions(val_sample)
 
-            validation_prompt = get_caption(val_sample[caption_column][0])
-        else:
-            validation_prompt = get_caption(val_sample[caption_column])
+        validation_prompt = get_caption(val_sample[caption_column][0])
+
 
         logger.info(
             f"Running validation... \n Generating {args.num_validation_images} images with prompt:"

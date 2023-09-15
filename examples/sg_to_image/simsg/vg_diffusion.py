@@ -135,44 +135,49 @@ class VGValidationDiff(VGDiffDatabase):
         super().__init__(vocab=vocab, h5_path=h5_path, image_dir=image_dir, **kwargs)
 
 
-def vg_collate_fn_diff(batch):
-    all_imgs, all_objs, all_boxes, all_triples, all_object_str = [], [], [], [], []
-    all_sg_embeds, all_input_ids = [], []
-    # all_obj_to_img, all_triple_to_img = [], []
-    # obj_offset = 0
-    for sample in batch:
-        img, objs, boxes, triples, objects_str, sg_embeds, input_ids = sample['image'], sample['objects'], sample[
-            'boxes'], sample['triplets'], sample['objects_str'], sample['sg_embeds'], sample['input_ids']
+def get_collate_fn(prepare_sg_embeds, tokenize_captions):
+    def vg_collate_fn_diff(batch):
+        all_imgs, all_objs, all_boxes, all_triples, all_object_str = [], [], [], [], []
 
-        all_imgs.append(img)
-        all_objs.append(objs)
-        all_boxes.append(boxes)
-        all_triples.append(triples)
-        all_object_str.append(objects_str)
-        print(f'sg_embeds.shape: {sg_embeds.shape}')
-        all_sg_embeds.append(sg_embeds)
-        all_input_ids.append(input_ids)
+        # all_obj_to_img, all_triple_to_img = [], []
+        # obj_offset = 0
+        for sample in batch:
+            img, objs, boxes, triples, objects_str = sample['image'], sample['objects'], sample[
+                'boxes'], sample['triplets'], sample['objects_str']
 
-    all_imgs = torch.stack(all_imgs)
-    # all_objs = torch.stack(all_objs)
-    # all_boxes = torch.stack(all_boxes)
-    # all_triples = torch.stack(all_triples)
-    # all_obj_to_img = torch.cat(all_obj_to_img)
-    # all_triple_to_img = torch.cat(all_triple_to_img)
+            all_imgs.append(img)
+            all_objs.append(objs)
+            all_boxes.append(boxes)
+            all_triples.append(triples)
+            all_object_str.append(objects_str)
 
-    all_sg_embeds = torch.stack(all_sg_embeds)
-    all_input_ids = torch.stack(all_input_ids)
+        all_sg_embeds = prepare_sg_embeds({'objects': all_objs, 'boxes': all_boxes, 'triplets': all_triples})
+        all_input_ids = tokenize_captions({'objects_str': all_object_str})
 
-    out = {
-        'image': all_imgs,
-        'objects': all_objs,
-        'boxes': all_boxes,
-        'triplets': all_triples,
-        'objects_str': all_object_str,
-        'sg_embeds': all_sg_embeds,
-        'input_ids': all_input_ids
-    }
-    return out
+        assert all_sg_embeds.ndim == 3 and all_input_ids.ndim == 2
+
+        all_imgs = torch.stack(all_imgs)
+        # all_objs = torch.stack(all_objs)
+        # all_boxes = torch.stack(all_boxes)
+        # all_triples = torch.stack(all_triples)
+        # all_obj_to_img = torch.cat(all_obj_to_img)
+        # all_triple_to_img = torch.cat(all_triple_to_img)
+
+        # all_sg_embeds = torch.stack(all_sg_embeds)
+        # all_input_ids = torch.stack(all_input_ids)
+
+        out = {
+            'image': all_imgs,
+            'objects': all_objs,
+            'boxes': all_boxes,
+            'triplets': all_triples,
+            'objects_str': all_object_str,
+            'sg_embeds': all_sg_embeds,
+            'input_ids': all_input_ids
+        }
+        return out
+
+    return vg_collate_fn_diff
 
 
 class Resize(object):
