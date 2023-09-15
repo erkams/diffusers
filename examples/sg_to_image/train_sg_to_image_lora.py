@@ -1189,10 +1189,10 @@ def main():
                 # print(f'sg_embeds shape: {sg_embeds.shape}')
                 input_ids = input_ids.unsqueeze(0).to(accelerator.device)
                 sg_embeds = sg_embeds.unsqueeze(0).to(accelerator.device)
-
-                images.append(pipeline(prompt_embeds=handle_hidden_states(input_ids=input_ids, condition=sg_embeds),
-                                       height=args.resolution, width=args.resolution, num_inference_steps=30,
-                                       generator=generator).images[0])
+                with accelerator.autocast():
+                    images.append(pipeline(prompt_embeds=handle_hidden_states(input_ids=input_ids, condition=sg_embeds),
+                                           height=args.resolution, width=args.resolution, num_inference_steps=30,
+                                           generator=generator).images[0])
             if not test:
                 # BOX AND OBJECT DETECTION METRICS
 
@@ -1457,7 +1457,7 @@ def main():
             if epoch % args.validation_epochs == 0:
                 validation_step(epoch)
 
-            if global_step % 5000 == 0:
+            if global_step % 5000 == 0 and global_step > 0:
                 print(f'***EVALUATING ON TEST DATA AT EPOCH {epoch}***')
                 evaluation_step(global_step, test=True)
 
