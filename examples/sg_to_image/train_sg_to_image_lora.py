@@ -670,7 +670,7 @@ def main():
     unet.to(accelerator.device, dtype=weight_dtype)
     vae.to(accelerator.device, dtype=weight_dtype)
     text_encoder.to(accelerator.device, dtype=weight_dtype)
-    sg_net.to(accelerator.device, dtype=weight_dtype)
+    sg_net.to(accelerator.device)
     # sg_net = accelerator.prepare(sg_net)
 
     unet.requires_grad_(False)
