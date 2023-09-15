@@ -597,15 +597,8 @@ def main():
     )
     logger.info(accelerator.state, main_process_only=False)
 
-    # Setup metrics
-    leading_metric, last_best_metric, metric_greater_cmp = {
-        'ISC': (torch_fidelity.KEY_METRIC_ISC_MEAN, 0.0, float.__gt__),
-        'FID': (torch_fidelity.KEY_METRIC_FID, float('inf'), float.__lt__),
-        'KID': (torch_fidelity.KEY_METRIC_KID_MEAN, float('inf'), float.__lt__),
-        'PPL': (torch_fidelity.KEY_METRIC_PPL_MEAN, float('inf'), float.__lt__),
-    }[args.leading_metric]
-
     isc_metric, last_best_isc, isc_cmp = torch_fidelity.KEY_METRIC_ISC_MEAN, 0.0, float.__gt__
+    fid_metric, last_best_fid, fid_cmp = torch_fidelity.KEY_METRIC_FID, float('inf'), float.__lt__
 
     object_detection_metrics = ObjectDetectionMetrics(dataset_type=dataset_type)
 
@@ -1160,7 +1153,7 @@ def main():
                 tracker.log({"validation": img_logs})
 
     def evaluation_step(global_step, test=False, num_batches=None):
-        nonlocal last_best_metric
+        nonlocal last_best_fid
         nonlocal last_best_isc
 
         if num_batches is None:
@@ -1278,33 +1271,33 @@ def main():
                 verbose=False)
 
             is_vals.append(metrics[isc_metric])
-            fid_vals.append(metrics[leading_metric])
+            fid_vals.append(metrics[fid_metric])
 
-        metrics = {isc_metric: np.mean(is_vals), leading_metric: np.mean(fid_vals)}
+        metrics = {isc_metric: float(np.mean(is_vals)), fid_metric: float(np.mean(fid_vals))}
 
         logger.info(f"*****{' Test' if test else ''} Eval results for STEP {global_step}*****")
         logger.info(f"ISC: {np.mean(is_vals)} +- {np.std(is_vals)}")
         logger.info(f"FID: {np.mean(fid_vals)} +- {np.std(fid_vals)}")
 
         if test:
-            accelerator.log({"TEST_" + leading_metric: metrics[leading_metric],
+            accelerator.log({"TEST_FID": metrics[fid_metric],
                              "TEST_IS": metrics[isc_metric]},
                             step=global_step)
         else:
-            accelerator.log({leading_metric: metrics[leading_metric], "IS": metrics[isc_metric]},
+            accelerator.log({"FID": metrics[fid_metric], "IS": metrics[isc_metric]},
                             step=global_step)
 
             # save the generator if it improved
-            if metric_greater_cmp(metrics[leading_metric], last_best_metric):
+            if fid_cmp(metrics[fid_metric], last_best_fid):
                 logger.info(
-                    f'Leading metric {leading_metric} improved from {last_best_metric} to {metrics[leading_metric]}')
-                last_best_metric = metrics[leading_metric]
+                    f'FID metric is improved from {last_best_fid} to {metrics[fid_metric]}')
+                last_best_fid = metrics[fid_metric]
                 torch.save(sg_net.state_dict(), f'{args.output_dir}/sg_encoder.pt')
 
             # save the generator if it improved
-            if metric_greater_cmp(metrics[isc_metric], last_best_isc):
+            if isc_cmp(metrics[isc_metric], last_best_isc):
                 logger.info(
-                    f'Leading metric IS improved from {last_best_isc} to {metrics[isc_metric]}')
+                    f'IS metric is improved from {last_best_isc} to {metrics[isc_metric]}')
                 last_best_isc = metrics[isc_metric]
 
     # torch.backends.cudnn.enabled = False
