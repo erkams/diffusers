@@ -1330,6 +1330,7 @@ def main():
     progress_bar = tqdm(range(global_step, args.max_train_steps), disable=not accelerator.is_local_main_process)
     progress_bar.set_description("Steps")
     PIXEL_VALUES_KEY = 'pixel_values' if dataset_type == "clevr" else 'image'
+    torch.save(sg_net.state_dict(), f'./sg_encoder.pt')
     for epoch in range(first_epoch, args.num_train_epochs):
 
         train_loss = 0.0
@@ -1454,6 +1455,7 @@ def main():
             if epoch % (8 * args.validation_epochs) == 0:
                 print(f'***EVALUATION AT EPOCH {epoch}***')
                 evaluation_step(global_step)
+                torch.save(sg_net.state_dict(), f'./sg_encoder.pt')
 
             if epoch % args.validation_epochs == 0:
                 validation_step(epoch)
