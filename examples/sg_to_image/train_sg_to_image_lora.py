@@ -1274,6 +1274,7 @@ def main():
                 logger.info(
                     f'Leading metric {leading_metric} improved from {last_best_metric} to {metrics[leading_metric]}')
                 last_best_metric = metrics[leading_metric]
+                torch.save(sg_net.state_dict(), f'./sg_encoder.pt')
 
             # save the generator if it improved
             if metric_greater_cmp(metrics[isc_metric], last_best_isc):
@@ -1455,7 +1456,6 @@ def main():
             if epoch % (8 * args.validation_epochs) == 0:
                 print(f'***EVALUATION AT EPOCH {epoch}***')
                 evaluation_step(global_step)
-                torch.save(sg_net.state_dict(), f'./sg_encoder.pt')
 
             if epoch % args.validation_epochs == 0:
                 validation_step(epoch)
