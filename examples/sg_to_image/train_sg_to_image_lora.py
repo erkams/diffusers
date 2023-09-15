@@ -1182,8 +1182,8 @@ def main():
             for input_ids, sg_embeds in zip(eval_samples["input_ids"], eval_samples["sg_embeds"]):
                 # input_ids = sample['input_ids']
                 # sg_embeds = sample['sg_embeds']
-                print(f'input id shape: {input_ids.shape}')
-                print(f'sg_embeds shape: {sg_embeds.shape}')
+                # print(f'input id shape: {input_ids.shape}')
+                # print(f'sg_embeds shape: {sg_embeds.shape}')
                 input_ids = input_ids.unsqueeze(0).to(accelerator.device)
                 sg_embeds = sg_embeds.unsqueeze(0).to(accelerator.device)
 
