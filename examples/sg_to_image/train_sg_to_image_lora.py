@@ -926,12 +926,14 @@ def main():
     )
 
     def scale_box(boxes):
-        if not args.center_crop:
-            return boxes
         assert dataset_type == 'clevr', 'Only CLEVR dataset needs box scaling!'
         if isinstance(boxes, list):
             boxes = torch.tensor(boxes)
         boxes = boxes.to(accelerator.device)
+
+        if not args.center_crop:
+            return boxes
+
         boxes = boxes * torch.tensor([320, 240, 320, 240]).to(accelerator.device) - torch.tensor(
             [40, 0, 40, 0]).to(accelerator.device)
         boxes = boxes.clip(0, 240) / 240
