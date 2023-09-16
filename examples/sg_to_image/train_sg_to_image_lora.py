@@ -1014,7 +1014,7 @@ def main():
                               image_size=args.resolution,
                               prepare_sg_embeds=prepare_sg_embeds,
                               tokenize_captions=tokenize_captions,
-                              max_samples=args.max_train_samples)
+                              max_samples=args.max_train_samples if k == 'train' else None)
             for k in ['train', 'val', 'test']}
     else:
         raise ValueError(f"Dataset {args.dataset_name} not supported. Supported datasets: clevr, vg")
