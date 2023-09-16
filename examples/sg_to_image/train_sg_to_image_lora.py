@@ -1156,6 +1156,10 @@ def main():
                 img_logs = [wandb.Image(img_gt, caption=f"Ground truth")] + img_logs
                 tracker.log({"validation": img_logs})
 
+        del pipeline
+        torch.cuda.empty_cache()
+
+
     def evaluation_step(global_step, test=False, num_batches=None):
         nonlocal last_best_fid
         nonlocal last_best_isc
@@ -1201,7 +1205,7 @@ def main():
 
         is_vals = []
         fid_vals = []
-
+        grid = None
         for _ in range(num_batches):
             with torch.no_grad():
                 eval_samples = next(iter(loader))
@@ -1259,7 +1263,6 @@ def main():
 
                 grid = make_grid(merged, 5, 8)
 
-                accelerator.log({"eval_images": [wandb.Image(grid, caption="Eval images")]}, step=global_step)
 
             # FID AND IS METRICS
             images_gt = eval_samples[image_column]
@@ -1305,7 +1308,11 @@ def main():
                 logger.info(
                     f'IS metric is improved from {last_best_isc} to {metrics[isc_metric]}')
                 last_best_isc = metrics[isc_metric]
+        if grid is not None:
+            accelerator.log({"eval_images": [wandb.Image(grid, caption="Eval images")]}, step=global_step)
 
+        del pipeline
+        torch.cuda.empty_cache()
         sg_net.train()
 
     # torch.backends.cudnn.enabled = False
@@ -1314,7 +1321,7 @@ def main():
     logger.info("***** Running validation check *****")
     validation_step(0)
     logger.info("***** Running test check *****")
-    evaluation_step(0, test=True, num_batches=2)
+    evaluation_step(0, test=True, num_batches=1)
 
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
@@ -1478,17 +1485,18 @@ def main():
             if global_step >= args.max_train_steps:
                 break
 
-        if accelerator.is_main_process:
-            if global_step % (200 * args.validation_epochs) == 0 and global_step % 2000 != 0:
-                print(f'***EVALUATION AT EPOCH {epoch}***')
-                evaluation_step(global_step)
+            if accelerator.is_main_process:
+                if global_step % (500 * args.validation_epochs) == 0:
+                    print(f'***EVALUATION AT STEP {global_step}***')
+                    validation_step(epoch)
 
-            if global_step % (500 * args.validation_epochs) == 0:
-                validation_step(epoch)
+                if global_step % (200 * args.validation_epochs) == 0 and global_step % 2000 != 0:
+                    print(f'***EVALUATION AT STEP {global_step}***')
+                    evaluation_step(global_step)
 
-            if global_step % 2000 == 0:
-                print(f'***EVALUATING ON TEST DATA AT EPOCH {epoch}***')
-                evaluation_step(global_step, test=True)
+                if global_step % 2000 == 0:
+                    print(f'***EVALUATING ON TEST DATA AT STEP {global_step}***')
+                    evaluation_step(global_step, test=True)
 
     # Save the lora layers
     accelerator.wait_for_everyone()
