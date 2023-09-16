@@ -217,7 +217,7 @@ def parse_args():
     parser.add_argument(
         "--num_eval_batches",
         type=int,
-        default=20,
+        default=4,
         help="Number of images that should be generated during evaluation during training.",
     )
     parser.add_argument(
