@@ -510,7 +510,7 @@ def make_grid(imgs, rows: int, cols: int) -> Image.Image:
     """
 
     width, height = (64, 64)
-    grid = Image.new("RGB", (cols * width, rows * height))
+    grid = Image.new("RGB", (int(cols * width), int(rows * height)))
     for i, img in enumerate(imgs):
         # convert to PIL if it's a tensor
         if isinstance(img, torch.Tensor):
@@ -1264,7 +1264,7 @@ def main():
                     merged.append(images_gt[i])
                     merged.append(images[i])
 
-                grid = make_grid(merged, args.num_eval_images / 4, 8)
+                grid = make_grid(merged, args.num_eval_images // 4, 8)
 
 
             # FID AND IS METRICS
