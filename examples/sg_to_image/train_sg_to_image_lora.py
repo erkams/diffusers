@@ -600,6 +600,7 @@ def main():
 
     isc_metric, last_best_isc, isc_cmp = torch_fidelity.KEY_METRIC_ISC_MEAN, 0.0, float.__gt__
     fid_metric, last_best_fid, fid_cmp = torch_fidelity.KEY_METRIC_FID, float('inf'), float.__lt__
+    kid_metric, last_best_kid, kid_cmp = torch_fidelity.KEY_METRIC_KID_MEAN, float('inf'), float.__lt__
 
     object_detection_metrics = ObjectDetectionMetrics(dataset_type=dataset_type)
 
@@ -1087,11 +1088,11 @@ def main():
 
         return prompt_embeds
 
-    def validation_step(epoch):
+    def validation_step(epoch, i=0):
         # Prepare validation sample
         sg_net.eval()
 
-        val_sample = dataset['val'][0]
+        val_sample = dataset['val'][i]
         val_sample[triplets_column] = [torch.tensor(val_sample[triplets_column], device=accelerator.device,
                                                     dtype=torch.long)]
         val_sample[objects_column] = [torch.tensor(val_sample[objects_column], device=accelerator.device,
@@ -1154,7 +1155,7 @@ def main():
                     for i, image in enumerate(generated_images)
                 ]
                 img_logs = [wandb.Image(img_gt, caption=f"Ground truth")] + img_logs
-                tracker.log({"validation": img_logs})
+                tracker.log({f"validation_{i}": img_logs})
 
         del pipeline
         torch.cuda.empty_cache()
@@ -1163,6 +1164,7 @@ def main():
     def evaluation_step(global_step, test=False, num_batches=None):
         nonlocal last_best_fid
         nonlocal last_best_isc
+        nonlocal last_best_kid
 
         if num_batches is None:
             num_batches = args.num_eval_batches if test else 1
@@ -1195,7 +1197,7 @@ def main():
 
         loader = torch.utils.data.DataLoader(
             dset,
-            shuffle=True if test else False,
+            shuffle=False,
             collate_fn=val_collate_fn if dataset_type == 'clevr' else collate_fn,
             batch_size=args.num_eval_images,
             num_workers=args.dataloader_num_workers,
@@ -1205,6 +1207,7 @@ def main():
 
         is_vals = []
         fid_vals = []
+        kid_vals = []
         grid = None
         for _ in range(num_batches):
             with torch.no_grad():
@@ -1261,7 +1264,7 @@ def main():
                     merged.append(images_gt[i])
                     merged.append(images[i])
 
-                grid = make_grid(merged, 5, 8)
+                grid = make_grid(merged, args.num_eval_images / 4, 8)
 
 
             # FID AND IS METRICS
@@ -1276,24 +1279,31 @@ def main():
                 cuda=True,
                 isc=True,
                 fid=True,
-                kid=False,
+                kid=True,
                 verbose=False)
 
             is_vals.append(metrics[isc_metric])
             fid_vals.append(metrics[fid_metric])
+            kid_vals.append(metrics[kid_metric])
 
-        metrics = {isc_metric: float(np.mean(is_vals)), fid_metric: float(np.mean(fid_vals))}
+        metrics = {isc_metric: float(np.mean(is_vals)),
+                   fid_metric: float(np.mean(fid_vals)),
+                   kid_metric: float(np.mean(kid_vals))}
 
         logger.info(f"*****{' Test' if test else ''} Eval results for STEP {global_step}*****")
         logger.info(f"ISC: {np.mean(is_vals)} +- {np.std(is_vals)}")
         logger.info(f"FID: {np.mean(fid_vals)} +- {np.std(fid_vals)}")
+        logger.info(f"KID: {np.mean(kid_vals)} +- {np.std(kid_vals)}")
 
         if test:
             accelerator.log({"TEST_FID": metrics[fid_metric],
-                             "TEST_IS": metrics[isc_metric]},
+                             "TEST_IS": metrics[isc_metric],
+                             "TEST_KID": metrics[kid_metric]},
                             step=global_step)
         else:
-            accelerator.log({"FID": metrics[fid_metric], "IS": metrics[isc_metric]},
+            accelerator.log({"FID": metrics[fid_metric],
+                             "IS": metrics[isc_metric],
+                             "KID": metrics[kid_metric]},
                             step=global_step)
 
             # save the generator if it improved
@@ -1308,6 +1318,13 @@ def main():
                 logger.info(
                     f'IS metric is improved from {last_best_isc} to {metrics[isc_metric]}')
                 last_best_isc = metrics[isc_metric]
+
+            # save the generator if it improved
+            if kid_cmp(metrics[kid_metric], last_best_kid):
+                logger.info(
+                    f'KID metric is improved from {last_best_kid} to {metrics[kid_metric]}')
+                last_best_kid = metrics[kid_metric]
+
         if grid is not None:
             accelerator.log({"eval_images": [wandb.Image(grid, caption="Eval images")]}, step=global_step)
 
@@ -1486,17 +1503,18 @@ def main():
                 break
 
             if accelerator.is_main_process:
-                if global_step % (500 * args.validation_epochs) == 0:
-                    print(f'***EVALUATION AT STEP {global_step}***')
-                    validation_step(epoch)
+                if global_step % (250 * args.validation_epochs) == 0:
+                    print(f'***VALIDATION AT STEP {global_step}***')
+                    validation_step(epoch, i=0)
+                    validation_step(epoch, i=1)
 
-                if global_step % (200 * args.validation_epochs) == 0 and global_step % 2000 != 0:
+                if global_step % (500 * args.validation_epochs) == 0:
                     print(f'***EVALUATION AT STEP {global_step}***')
                     evaluation_step(global_step)
 
-                if global_step % 2000 == 0:
-                    print(f'***EVALUATING ON TEST DATA AT STEP {global_step}***')
-                    evaluation_step(global_step, test=True)
+                # if global_step % 2000 == 0:
+                #     print(f'***EVALUATING ON TEST DATA AT STEP {global_step}***')
+                #     evaluation_step(global_step, test=True)
 
     # Save the lora layers
     accelerator.wait_for_everyone()
