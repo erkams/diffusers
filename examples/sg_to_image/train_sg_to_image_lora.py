@@ -1280,6 +1280,7 @@ def main():
                 isc=True,
                 fid=True,
                 kid=True,
+                kid_subset_size=args.num_eval_images,
                 verbose=False)
 
             is_vals.append(metrics[isc_metric])
