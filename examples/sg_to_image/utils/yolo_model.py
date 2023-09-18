@@ -14,6 +14,8 @@ class ObjectDetectionMetrics:
         model_path = hf_hub_download(repo_id='erkam/yolo-clevr', filename='best.pt')
         self.iou = iou
         self.dataset_type = dataset_type
+        self.conf = 0.75 if self.dataset_type == 'clevr' else 0.5
+        self.max_det = 20 if self.dataset_type == 'clevr' else 30
         self.yolo_model = YOLO(model_path)
         self.sam_model = FastSAM('FastSAM-s.pt')
 
@@ -29,8 +31,8 @@ class ObjectDetectionMetrics:
             raise TypeError("img should be Tensor, PIL Image or numpy array")
 
         img = img.resize((640, 640), Image.BILINEAR)
-
-        results = self.sam_model(img, conf=0.75, iou=0.4, max_det=20, device='cpu', verbose=False)
+        iou_th = 0.4 if self.dataset_type == 'clevr' else None
+        results = self.sam_model(img, conf=self.conf, iou=iou_th, max_det=self.max_det, device='cpu', verbose=False)
 
         if len(results[0].boxes.data) == 0:
             return 0, 0, 0
@@ -41,7 +43,11 @@ class ObjectDetectionMetrics:
         boxes = sorted(boxes, key=lambda bbox: (bbox[2] - bbox[0]) * (bbox[3] - bbox[1]))
         # print(boxes)
         boxes = [box[:-2] for box in boxes]
-        boxes_pred = filter_boxes(boxes)
+
+        if self.dataset_type == 'clevr':
+            boxes_pred = filter_boxes(boxes)
+        else:
+            boxes_pred = boxes
 
         if len(boxes_pred) == 0:
             return 0, 0, 0
@@ -153,7 +159,7 @@ def is_bbox_contained(bbox1, bbox2):
         return False
 
 
-def filter_boxes(boxes):
+def filter_boxes(boxes, dataset_type='clevr'):
     filtered_boxes = []
     for box in boxes:
         contained = False
