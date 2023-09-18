@@ -31,8 +31,10 @@ class ObjectDetectionMetrics:
             raise TypeError("img should be Tensor, PIL Image or numpy array")
 
         img = img.resize((640, 640), Image.BILINEAR)
-        iou_th = 0.4 if self.dataset_type == 'clevr' else None
-        results = self.sam_model(img, conf=self.conf, iou=iou_th, max_det=self.max_det, device='cpu', verbose=False)
+        if self.dataset_type == "clevr":
+            results = self.sam_model(img, conf=self.conf, iou=0.4, max_det=self.max_det, device='cpu', verbose=False)
+        else:
+            results = self.sam_model(img, conf=self.conf, max_det=self.max_det, device='cpu', verbose=False)
 
         if len(results[0].boxes.data) == 0:
             return 0, 0, 0
