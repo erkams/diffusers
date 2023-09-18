@@ -1245,7 +1245,7 @@ def main():
 
                 accelerator.log({"mAP_BOX": box_aps / len(images),
                                  "mAP_OBJ": obj_aps / len(images),
-                                 "NUM_OBJS": sum_num_objs / len(images)}, step=global_step)
+                                 "NUM_OBJS": sum_num_objs / len(images)})
 
                 logger.info("***** Eval results *****")
                 logger.info(f"mAP_BOX: {box_aps / len(images)}")
@@ -1297,13 +1297,11 @@ def main():
         if test:
             accelerator.log({"TEST_FID": metrics[fid_metric],
                              "TEST_IS": metrics[isc_metric],
-                             "TEST_KID": metrics[kid_metric]},
-                            step=global_step)
+                             "TEST_KID": metrics[kid_metric]})
         else:
             accelerator.log({"FID": metrics[fid_metric],
                              "IS": metrics[isc_metric],
-                             "KID": metrics[kid_metric]},
-                            step=global_step)
+                             "KID": metrics[kid_metric]})
 
             # save the generator if it improved
             if fid_cmp(metrics[fid_metric], last_best_fid):
@@ -1325,7 +1323,7 @@ def main():
                 last_best_kid = metrics[kid_metric]
 
         if grid is not None:
-            accelerator.log({"eval_images": [wandb.Image(grid, caption="Eval images")]}, step=global_step)
+            accelerator.log({"eval_images": [wandb.Image(grid, caption="Eval images")]})
 
         del pipeline
         torch.cuda.empty_cache()
