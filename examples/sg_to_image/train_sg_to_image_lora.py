@@ -620,6 +620,8 @@ def main():
     # Handle the repository creation
     if accelerator.is_main_process:
         if args.output_dir is not None:
+            # make sure that output_dir is not created and used before
+            assert not os.path.isdir(args.output_dir), f"Output directory ({args.output_dir}) already exists!"
             os.makedirs(args.output_dir, exist_ok=True)
 
         if args.push_to_hub:
@@ -1334,8 +1336,6 @@ def main():
     evaluation_step(0)
     logger.info("***** Running validation check *****")
     validation_step(0)
-    logger.info("***** Running test check *****")
-    evaluation_step(0, test=True, num_batches=1)
 
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
