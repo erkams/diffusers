@@ -12,9 +12,8 @@ import json
 
 class VGDiffDatabase(Dataset):
     def __init__(self, vocab, h5_path, image_dir, image_size=256, max_objects=10, max_samples=None,
-                 include_relationships=True, use_orphaned_objects=True, prepare_sg_embeds=None, tokenize_captions=None):
-        assert prepare_sg_embeds is not None, 'prepare_sg_embeds must be provided'
-        assert tokenize_captions is not None, 'tokenize_captions must be provided'
+                 include_relationships=True, use_orphaned_objects=True):
+
 
         with open(vocab, 'r') as f:
             vocab = json.load(f)
@@ -26,8 +25,7 @@ class VGDiffDatabase(Dataset):
         self.max_objects = max_objects
         self.max_samples = max_samples
         self.include_relationships = include_relationships
-        self.prepare_sg_embeds = prepare_sg_embeds
-        self.tokenize_captions = tokenize_captions
+
         self.is_train = True if 'train' in h5_path else False
         if self.is_train:
             transform = [Resize(self.image_size), transforms.ToTensor(), transforms.Normalize(0.5, 0.5)]  # augmentation
@@ -112,17 +110,12 @@ class VGDiffDatabase(Dataset):
 
         triples = torch.LongTensor(triples)
         objects_str = ', '.join([self.vocab['object_idx_to_name'][obj.item()] for obj in objs[:-1]])
-        sg_embeds = self.prepare_sg_embeds({'objects': [objs], 'boxes': [boxes], 'triplets': [triples]},
-                                           is_train=self.is_train)
-        input_ids = self.tokenize_captions({'objects_str': [objects_str]}, is_train=self.is_train)
 
         out = {'image': image,
                'objects': objs,
                'boxes': boxes,
                'triplets': triples,
-               'objects_str': objects_str,
-               'sg_embeds': sg_embeds,
-               'input_ids': input_ids}
+               'objects_str': objects_str}
 
         return out
 

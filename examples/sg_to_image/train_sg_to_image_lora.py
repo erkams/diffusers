@@ -1012,8 +1012,6 @@ def main():
         dataset = {
             k: VGDiffDatabase(**vg_configs[k],
                               image_size=args.resolution,
-                              prepare_sg_embeds=prepare_sg_embeds,
-                              tokenize_captions=tokenize_captions,
                               max_samples=args.max_train_samples if k == 'train' else None)
             for k in ['train', 'val', 'test']}
     else:
