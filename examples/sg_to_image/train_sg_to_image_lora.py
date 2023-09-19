@@ -1398,6 +1398,10 @@ def main():
     progress_bar.set_description("Steps")
     PIXEL_VALUES_KEY = 'pixel_values' if dataset_type == "clevr" else 'image'
     torch.save(sg_net.state_dict(), f'./sg_encoder.pt')
+    # TEST saving and continuing
+    unet = unet.to(torch.float32)
+    unet.save_attn_procs(args.output_dir)
+    unet = unet.to(weight_dtype)
     for epoch in range(first_epoch, args.num_train_epochs):
 
         train_loss = 0.0
@@ -1517,6 +1521,10 @@ def main():
                     if accelerator.is_main_process:
                         save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
                         accelerator.save_state(save_path)
+                        unet = unet.to(torch.float32)
+                        unet.save_attn_procs(os.path.join(args.output_dir, f"checkpoint-{global_step}"))
+                        unet = unet.to(weight_dtype)
+                        torch.save(sg_net.state_dict(), f'{os.path.join(args.output_dir, f"checkpoint-{global_step}")}/sg_encoder.pt')
                         logger.info(f"Saved state to {save_path}")
 
             logs = {"step_loss": loss.detach().item(), "lr_sg": lr_scheduler_sg.get_last_lr()[0]}
