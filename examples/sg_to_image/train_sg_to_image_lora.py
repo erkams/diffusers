@@ -1401,7 +1401,7 @@ def main():
     progress_bar = tqdm(range(global_step, args.max_train_steps), disable=not accelerator.is_local_main_process)
     progress_bar.set_description("Steps")
     PIXEL_VALUES_KEY = 'pixel_values' if dataset_type == "clevr" else 'image'
-    torch.save(sg_net.state_dict(), f'./sg_encoder.pt')
+    torch.save(sg_net.state_dict(), f'{args.output_dir}/sg_encoder.pt')
     for epoch in range(first_epoch, args.num_train_epochs):
 
         train_loss = 0.0
@@ -1430,7 +1430,6 @@ def main():
                     logger.info(f'STEP: {step}')
                     logger.info(f'sg embed shape: {batch["sg_embeds"].shape}')
 
-            accelerator.wait_for_everyone()
             with accelerator.accumulate(unet):
                 im = batch[PIXEL_VALUES_KEY].to(dtype=weight_dtype)
 
