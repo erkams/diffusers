@@ -1402,10 +1402,6 @@ def main():
     progress_bar.set_description("Steps")
     PIXEL_VALUES_KEY = 'pixel_values' if dataset_type == "clevr" else 'image'
     torch.save(sg_net.state_dict(), f'./sg_encoder.pt')
-    # TEST saving and continuing
-    unet = unet.to(torch.float32)
-    unet.save_attn_procs(args.output_dir)
-    unet = unet.to(weight_dtype)
     for epoch in range(first_epoch, args.num_train_epochs):
 
         train_loss = 0.0
@@ -1417,6 +1413,10 @@ def main():
                 lora_layers, optimizer_lora, lr_scheduler_lora = set_lora_layers()
                 lora_layers, optimizer_lora, lr_scheduler_lora = accelerator.prepare(lora_layers, optimizer_lora,
                                                                                      lr_scheduler_lora)
+                logger.info('Trying to save LoRA layers...')
+                unet = unet.to(torch.float32)
+                unet.save_attn_procs(args.output_dir)
+                unet = unet.to(weight_dtype)
 
             # Skip steps until we reach the resumed step
             if args.resume_from_checkpoint and epoch == first_epoch and step < resume_step:
