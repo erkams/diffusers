@@ -1429,6 +1429,7 @@ def main():
                     logger.info(f'STEP: {step}')
                     logger.info(f'sg embed shape: {batch["sg_embeds"].shape}')
 
+            accelerator.wait_for_everyone()
             with accelerator.accumulate(unet):
                 im = batch[PIXEL_VALUES_KEY].to(dtype=weight_dtype)
 
