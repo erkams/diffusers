@@ -1363,6 +1363,7 @@ def main():
     logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
     global_step = 0
+    last_log_step = -1
     first_epoch = 0
     train_lora = False
     images = []
@@ -1528,14 +1529,15 @@ def main():
                 break
 
             if accelerator.is_main_process:
-                if global_step % (250 * args.validation_epochs) == 0:
+                if global_step % (250 * args.validation_epochs) == 0 and last_log_step != global_step:
                     print(f'***VALIDATION AT STEP {global_step}***')
                     validation_step(epoch, i=0)
                     validation_step(epoch, i=1)
 
-                if global_step % (500 * args.validation_epochs) == 0:
+                if global_step % (500 * args.validation_epochs) == 0 and last_log_step != global_step:
                     print(f'***EVALUATION AT STEP {global_step}***')
                     evaluation_step(global_step)
+                    last_log_step = global_step
 
                 # if global_step % 2000 == 0:
                 #     print(f'***EVALUATING ON TEST DATA AT STEP {global_step}***')
