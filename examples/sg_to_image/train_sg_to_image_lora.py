@@ -1417,6 +1417,7 @@ def main():
                 unet = unet.to(torch.float32)
                 unet.save_attn_procs(args.output_dir)
                 unet = unet.to(weight_dtype)
+                lora_layers = lora_layers.to(torch.float32)
 
             # Skip steps until we reach the resumed step
             if args.resume_from_checkpoint and epoch == first_epoch and step < resume_step:
