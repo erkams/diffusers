@@ -1530,6 +1530,7 @@ def main():
                         unet = unet.to(torch.float32)
                         unet.save_attn_procs(os.path.join(args.output_dir, f"checkpoint-{global_step}"))
                         unet = unet.to(weight_dtype)
+                        lora_layers = lora_layers.to(torch.float32)
                         torch.save(sg_net.state_dict(), f'{os.path.join(args.output_dir, f"checkpoint-{global_step}")}/sg_encoder.pt')
                         logger.info(f"Saved state to {save_path}")
 
