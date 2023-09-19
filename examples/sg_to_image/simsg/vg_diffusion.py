@@ -12,8 +12,7 @@ import json
 
 class VGDiffDatabase(Dataset):
     def __init__(self, vocab, h5_path, image_dir, image_size=256, max_objects=10, max_samples=None,
-                 include_relationships=True, use_orphaned_objects=True):
-
+                 include_relationships=True, use_orphaned_objects=True, use_depth=False):
 
         with open(vocab, 'r') as f:
             vocab = json.load(f)
@@ -25,6 +24,7 @@ class VGDiffDatabase(Dataset):
         self.max_objects = max_objects
         self.max_samples = max_samples
         self.include_relationships = include_relationships
+        self.use_depth = use_depth
 
         self.is_train = True if 'train' in h5_path else False
         if self.is_train:
@@ -54,6 +54,11 @@ class VGDiffDatabase(Dataset):
                 WW, HH = image.size
                 image = self.transform(image.convert('RGB'))
 
+        if self.use_depth:
+            depth_path = f'/mnt/workfiles/MegaDepth/vg/{os.path.splitext(self.image_paths[index])[0].decode("utf-8")}.png '
+            with open(depth_path, 'rb') as f:
+                with PIL.Image.open(f) as depth:
+                    depth = self.transform(depth.convert('L'))
         # image = image * 2 - 1
 
         obj_idxs_with_rels = set()
@@ -117,6 +122,8 @@ class VGDiffDatabase(Dataset):
                'triplets': triples,
                'objects_str': objects_str}
 
+        if self.use_depth:
+            out['depth'] = depth
         return out
 
 
@@ -133,13 +140,15 @@ class VGValidationDiff(VGDiffDatabase):
 def get_collate_fn(prepare_sg_embeds, tokenize_captions):
     def vg_collate_fn_diff(batch):
         all_imgs, all_objs, all_boxes, all_triples, all_object_str = [], [], [], [], []
-
+        all_depths = []
         # all_obj_to_img, all_triple_to_img = [], []
         # obj_offset = 0
         for sample in batch:
             img, objs, boxes, triples, objects_str = sample['image'], sample['objects'], sample[
                 'boxes'], sample['triplets'], sample['objects_str']
-
+            if 'depth' in sample:
+                depth = sample['depth']
+                all_depths.append(depth)
             all_imgs.append(img)
             all_objs.append(objs)
             all_boxes.append(boxes)
@@ -170,6 +179,10 @@ def get_collate_fn(prepare_sg_embeds, tokenize_captions):
             'sg_embeds': all_sg_embeds,
             'input_ids': all_input_ids
         }
+
+        if len(all_depths) > 0:
+            out['depth'] = torch.stack(all_depths)
+
         return out
 
     return vg_collate_fn_diff

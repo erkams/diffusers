@@ -52,6 +52,8 @@ from diffusers.utils.import_utils import is_xformers_available
 from utils import ObjectDetectionMetrics, compute_average_precision
 
 from utils import ListDataset
+from utils import interpolate
+
 import torch_fidelity
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
@@ -153,6 +155,9 @@ def parse_args():
     )
     parser.add_argument(
         "--image_column", type=str, default="image", help="The column of the dataset containing an image."
+    )
+    parser.add_argument(
+        "--depth_column", type=str, default="depth", help="The column of the dataset containing the depth map."
     )
     parser.add_argument(
         "--caption_column",
@@ -459,6 +464,10 @@ def parse_args():
         choices=('simsg', 'sgnet'),
         help="Type of sg encoder.",
     )
+    parser.add_argument(
+        "--use_depth", action="store_true",
+        help="Whether or not to use depth map to interpolate with the image for training"
+    )
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if env_local_rank != -1 and env_local_rank != args.local_rank:
@@ -569,6 +578,7 @@ def main():
     dataset_type = 'clevr' if 'clevr' in args.dataset_name else 'vg'
 
     image_column = args.image_column
+    depth_column = args.depth_column
     caption_column = args.caption_column
     triplets_column = args.triplets_column
     boxes_column = args.boxes_column
@@ -920,8 +930,8 @@ def main():
     train_transforms = transforms.Compose(
         [
             transforms.Resize((args.resolution, args.resolution), interpolation=transforms.InterpolationMode.BILINEAR),
-            transforms.CenterCrop(args.resolution) if args.center_crop else transforms.RandomCrop(args.resolution),
-            transforms.RandomHorizontalFlip() if args.random_flip else transforms.Lambda(lambda x: x),
+            # transforms.CenterCrop(args.resolution) if args.center_crop else transforms.RandomCrop(args.resolution),
+            # transforms.RandomHorizontalFlip() if args.random_flip else transforms.Lambda(lambda x: x),
             transforms.ToTensor(),
             transforms.Normalize([0.5], [0.5]),
         ]
@@ -952,6 +962,10 @@ def main():
         examples["pixel_values"] = [train_transforms(image) for image in images]
         examples["input_ids"] = tokenize_captions(examples)
         examples["sg_embeds"] = prepare_sg_embeds(examples)
+
+        if args.use_depth:
+            depth_maps = [depth_map.convert("RGB") for depth_map in examples[depth_column]]
+            examples["depth_maps"] = [train_transforms(depth_map) for depth_map in depth_maps]
         return examples
 
     def preprocess_val(examples):
@@ -973,13 +987,17 @@ def main():
         pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
         input_ids = torch.stack([example["input_ids"] for example in examples])
         sg_embeds = torch.stack([example["sg_embeds"] for example in examples])
-        print(f'sg_embeds.shape: {sg_embeds.shape}')
-        print(f'input_ids.shape: {input_ids.shape}')
-        print(f'pixel_values.shape: {pixel_values.shape}')
-        return {"pixel_values": pixel_values,
-                "input_ids": input_ids,
-                "sg_embeds": sg_embeds,
-                }
+
+        out = {"pixel_values": pixel_values,
+               "input_ids": input_ids,
+               "sg_embeds": sg_embeds,
+               }
+
+        if args.use_depth:
+            depth_maps = torch.stack([example["depth_maps"] for example in examples])
+            depth_maps = depth_maps.to(memory_format=torch.contiguous_format).float()
+            out[depth_column] = depth_maps
+        return out
 
     def val_collate_fn(examples):
         assert dataset_type == 'clevr', 'Only CLEVR dataset needs collate_fn!'
@@ -991,8 +1009,7 @@ def main():
         boxes = [example[boxes_column] for example in examples]
         objects = [example[objects_column] for example in examples]
         triplets = [example[triplets_column] for example in examples]
-
-        return {
+        out = {
             "image": all_images,
             "input_ids": input_ids,
             "sg_embeds": sg_embeds,
@@ -1000,6 +1017,7 @@ def main():
             "objects": objects,
             "triplets": triplets,
         }
+        return out
 
     if dataset_type == 'clevr':
         # Downloading and loading a dataset from the hub.
@@ -1014,7 +1032,8 @@ def main():
         dataset = {
             k: VGDiffDatabase(**vg_configs[k],
                               image_size=args.resolution,
-                              max_samples=args.max_train_samples if k == 'train' else None)
+                              max_samples=args.max_train_samples if k == 'train' else None,
+                              use_depth=args.use_depth)
             for k in ['train', 'val', 'test']}
     else:
         raise ValueError(f"Dataset {args.dataset_name} not supported. Supported datasets: clevr, vg")
@@ -1160,7 +1179,6 @@ def main():
         del pipeline
         torch.cuda.empty_cache()
 
-
     def evaluation_step(global_step, test=False, num_batches=None):
         nonlocal last_best_fid
         nonlocal last_best_isc
@@ -1213,7 +1231,8 @@ def main():
             with torch.no_grad():
                 eval_samples = next(iter(loader))
             images = []
-            for input_ids, sg_embeds in tqdm(zip(eval_samples["input_ids"], eval_samples["sg_embeds"]), total=len(eval_samples["input_ids"])):
+            for input_ids, sg_embeds in tqdm(zip(eval_samples["input_ids"], eval_samples["sg_embeds"]),
+                                             total=len(eval_samples["input_ids"])):
                 # input_ids = sample['input_ids']
                 # sg_embeds = sample['sg_embeds']
                 # print(f'input id shape: {input_ids.shape}')
@@ -1265,7 +1284,6 @@ def main():
                     merged.append(images[i])
 
                 grid = make_grid(merged, args.num_eval_images // 4, 8)
-
 
             # FID AND IS METRICS
             images_gt = eval_samples[image_column]
@@ -1403,8 +1421,21 @@ def main():
                     logger.info(f'sg embed shape: {batch["sg_embeds"].shape}')
 
             with accelerator.accumulate(unet):
+                im = batch[PIXEL_VALUES_KEY].to(dtype=weight_dtype)
+
+                bsz = im.shape[0]
+                # Sample a random timestep for each image
+                timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (bsz,), device=latents.device)
+                timesteps = timesteps.long()
+
+                if args.use_depth:
+                    depth = batch[depth_column].to(dtype=weight_dtype)
+                    gt_image = interpolate(im, depth, timesteps/(noise_scheduler.num_train_timesteps-1))
+                else:
+                    gt_image = im
+
                 # Convert images to latent space
-                latents = vae.encode(batch[PIXEL_VALUES_KEY].to(dtype=weight_dtype)).latent_dist.sample()
+                latents = vae.encode(gt_image).latent_dist.sample()
 
                 latents = latents * vae.config.scaling_factor
 
@@ -1416,10 +1447,7 @@ def main():
                         (latents.shape[0], latents.shape[1], 1, 1), device=latents.device
                     )
 
-                bsz = latents.shape[0]
-                # Sample a random timestep for each image
-                timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (bsz,), device=latents.device)
-                timesteps = timesteps.long()
+
 
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
@@ -1518,7 +1546,7 @@ def main():
     if accelerator.is_main_process:
         unet = unet.to(torch.float32)
         unet.save_attn_procs(args.output_dir)
-
+        torch.save(sg_net.state_dict(), f'{args.output_dir}/sg_encoder_last.pt')
         if args.push_to_hub:
             save_model_card(
                 repo_id,
