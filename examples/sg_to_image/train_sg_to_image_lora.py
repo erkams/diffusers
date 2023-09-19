@@ -1440,7 +1440,7 @@ def main():
 
                 if args.use_depth:
                     depth = batch[depth_column].to(dtype=weight_dtype)
-                    gt_image = interpolate(im, depth, timesteps/(noise_scheduler.num_train_timesteps-1))
+                    gt_image = interpolate(im, depth, timesteps/(noise_scheduler.num_train_timesteps-1)).to(dtype=weight_dtype)
                 else:
                     gt_image = im
 
