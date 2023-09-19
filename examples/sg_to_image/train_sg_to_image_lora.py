@@ -1425,7 +1425,7 @@ def main():
 
                 bsz = im.shape[0]
                 # Sample a random timestep for each image
-                timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (bsz,), device=latents.device)
+                timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (bsz,), device=accelerator.device)
                 timesteps = timesteps.long()
 
                 if args.use_depth:

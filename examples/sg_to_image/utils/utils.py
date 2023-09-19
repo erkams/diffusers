@@ -1,3 +1,6 @@
+import torch
+
+
 def interpolate(im, depth, alphas):
     """
     Interpolates between two image tensors with a magnitude based on the alphas.
@@ -8,7 +11,9 @@ def interpolate(im, depth, alphas):
     Returns:
     interpolated: (batch_size, 3, H, W) tensor
     """
-
-    interpolated = im * alphas + depth * (1 - alphas)
+    a = torch.clone(alphas)
+    a[a >= 0.9] = 1.0
+    a = a.view(im.shape[0], 1, 1, 1)
+    interpolated = depth * a + im * (1 - a)
 
     return interpolated
