@@ -1414,10 +1414,10 @@ def main():
                 lora_layers, optimizer_lora, lr_scheduler_lora = accelerator.prepare(lora_layers, optimizer_lora,
                                                                                      lr_scheduler_lora)
                 logger.info('Trying to save LoRA layers...')
-                unet = unet.to(torch.float32)
+                # unet = unet.to(torch.float32)
                 unet.save_attn_procs(args.output_dir)
-                unet = unet.to(weight_dtype)
-                lora_layers = lora_layers.to(torch.float32)
+                # unet = unet.to(weight_dtype)
+                # lora_layers = lora_layers.to(torch.float32)
 
             # Skip steps until we reach the resumed step
             if args.resume_from_checkpoint and epoch == first_epoch and step < resume_step:
@@ -1526,10 +1526,10 @@ def main():
                     if accelerator.is_main_process:
                         save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
                         accelerator.save_state(save_path)
-                        unet = unet.to(torch.float32)
+                        # unet = unet.to(torch.float32)
                         unet.save_attn_procs(os.path.join(args.output_dir, f"checkpoint-{global_step}"))
-                        unet = unet.to(weight_dtype)
-                        lora_layers = lora_layers.to(torch.float32)
+                        # unet = unet.to(weight_dtype)
+                        # lora_layers = lora_layers.to(torch.float32)
                         torch.save(sg_net.state_dict(), f'{os.path.join(args.output_dir, f"checkpoint-{global_step}")}/sg_encoder.pt')
                         logger.info(f"Saved state to {save_path}")
 
