@@ -468,6 +468,9 @@ def parse_args():
         "--use_depth", action="store_true",
         help="Whether or not to use depth map to interpolate with the image for training"
     )
+    parser.add_argument(
+        "--skip_sanity", action="store_true", help="Whether or not to skip sanity check for val and eval steps."
+    )
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if env_local_rank != -1 and env_local_rank != args.local_rank:
@@ -1350,10 +1353,11 @@ def main():
         sg_net.train()
 
     # torch.backends.cudnn.enabled = False
-    logger.info("***** Running eval check *****")
-    evaluation_step(0)
-    logger.info("***** Running validation check *****")
-    validation_step(0)
+    if not args.skip_sanity:
+        logger.info("***** Running eval check *****")
+        evaluation_step(0)
+        logger.info("***** Running validation check *****")
+        validation_step(0)
 
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
