@@ -1525,9 +1525,6 @@ def main():
             progress_bar.set_postfix(**logs)
             accelerator.log(logs, step=global_step)
 
-            if global_step >= args.max_train_steps:
-                break
-
             if accelerator.is_main_process:
                 if global_step % (250 * args.validation_epochs) == 0 and last_log_step != global_step:
                     print(f'***VALIDATION AT STEP {global_step}***')
@@ -1539,6 +1536,8 @@ def main():
                     evaluation_step(global_step)
                     last_log_step = global_step
 
+            if global_step >= args.max_train_steps:
+                break
                 # if global_step % 2000 == 0:
                 #     print(f'***EVALUATING ON TEST DATA AT STEP {global_step}***')
                 #     evaluation_step(global_step, test=True)
