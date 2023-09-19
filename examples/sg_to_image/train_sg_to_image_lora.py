@@ -845,7 +845,7 @@ def main():
         if dataset_type == 'clevr':
             max_length = (8, 21)
         else:
-            max_length = (77, 21)
+            max_length = (30, 21)
 
         num_objs_per_image = []
         num_triplets_per_image = []
