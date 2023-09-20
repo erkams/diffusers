@@ -555,6 +555,7 @@ def build_sg_encoder(args, tokenizer=None, text_encoder=None):
                 'tokenizer': tokenizer,
                 'text_encoder': text_encoder,
                 'identity': args.identity,
+                'reverse_triplets': args.reverse_triplets,
             }
             sg_net = SGModel(**kwargs)
             sg_net.train()
