@@ -944,6 +944,13 @@ def main():
         ]
     )
 
+    val_transforms = transforms.Compose(
+        [
+            transforms.Resize(args.resolution, interpolation=transforms.InterpolationMode.BILINEAR) if args.center_crop else transforms.Resize((args.resolution, args.resolution), interpolation=transforms.InterpolationMode.BILINEAR),
+            transforms.CenterCrop(args.resolution) if args.center_crop else transforms.Lambda(lambda x: x)
+        ]
+    )
+
     def scale_box(boxes):
         assert dataset_type == 'clevr', 'Only CLEVR dataset needs box scaling!'
         if isinstance(boxes, list):
@@ -977,7 +984,7 @@ def main():
 
     def preprocess_val(examples):
         assert dataset_type == 'clevr', 'Only CLEVR dataset needs preprocess_val!'
-        examples[image_column] = [image.convert("RGB").resize((args.resolution, args.resolution)) for image in
+        examples[image_column] = [val_transforms(image.convert("RGB")) for image in
                                   examples[image_column]]
         examples[triplets_column] = [torch.tensor(triplets, device=accelerator.device, dtype=torch.long) for triplets in
                                      examples[triplets_column]]
@@ -1173,8 +1180,10 @@ def main():
                     img_gt = transforms.ToPILImage()(img_gt)
                 elif isinstance(img_gt, list):  # CLEVR?
                     img_gt = img_gt[0]
-
-                img_gt = img_gt.resize((args.resolution, args.resolution))
+                if args.center_crop and dataset_type == 'clevr':
+                    img_gt = val_transforms(img_gt)
+                else:
+                    img_gt = img_gt.resize((args.resolution, args.resolution))
 
                 img_logs = [
                     wandb.Image(image, caption=f"{i}: {validation_prompt}")
