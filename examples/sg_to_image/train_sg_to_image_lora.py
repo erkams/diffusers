@@ -373,6 +373,9 @@ def parse_args():
         "--identity", action="store_true", help="Whether or not to add identity to the sg embed"
     )
     parser.add_argument(
+        "--reverse_triplets", action="store_true", help="Whether or not to reverse subject and object in triplets"
+    )
+    parser.add_argument(
         "--start_lora", type=int, default=0, help="Number of steps after to start the lora training."
     )
     parser.add_argument("--vocab_json", type=str, default="mnt/students/vocab.json", help="The path to the vocab file.")

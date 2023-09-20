@@ -35,7 +35,7 @@ class SGModel(nn.Module):
                  gconv_pooling='avg', gconv_num_layers=5, mlp_normalization='none',
                  feat_dims=128, is_baseline=False, is_supervised=False,
                  feats_in_gcn=False, feats_out_gcn=True, 
-                 text_encoder=None, tokenizer=None, identity=False, **kwargs):
+                 text_encoder=None, tokenizer=None, identity=False, reverse_triplets=False, **kwargs):
 
         super(SGModel, self).__init__()
 
@@ -49,6 +49,7 @@ class SGModel(nn.Module):
         self.is_baseline = is_baseline
         self.is_supervised = is_supervised
         self.identity = identity
+        self.reverse_triplets = reverse_triplets
         # num_objs = len(vocab['object_idx_to_name'])
         # num_preds = len(vocab['pred_idx_to_name'])
         if tokenizer is None:
@@ -141,7 +142,10 @@ class SGModel(nn.Module):
         assert objects.device == triples.device
         s, p, o = triples.chunk(3, dim=1)  # All have shape (num_triples, 1)
         s, p, o = [x.squeeze(1) for x in [s, p, o]]  # Now have shape (num_triples,)
-        edges = torch.stack([s, o], dim=1)  # Shape is (num_triples, 2)
+        if self.reverse_triplets:
+            edges = torch.stack([o, s], dim=1)  # Shape is (num_triples, 2)
+        else:
+            edges = torch.stack([s, o], dim=1)  # Shape is (num_triples, 2)
 
         objs = objects
         # print(f'objs shape: {objs.shape}')
