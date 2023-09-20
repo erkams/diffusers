@@ -12,7 +12,7 @@ def interpolate(im, depth, alphas):
     interpolated: (batch_size, 3, H, W) tensor
     """
     a = torch.clone(alphas)
-    a[a >= 0.9] = 1.0
+    # a[a >= 0.9] = 1.0
     a = a.view(im.shape[0], 1, 1, 1)
     interpolated = depth * a + im * (1 - a)
 
