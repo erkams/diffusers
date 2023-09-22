@@ -96,8 +96,8 @@ def get_constant_schedule_with_reverse_warmup(optimizer: Optimizer, num_warmup_s
 
     def lr_lambda(current_step: int):
         if current_step < num_warmup_steps:
-            return float(num_warmup_steps - (1-0.01) * current_step) / float(max(1.0, num_warmup_steps))
-        return 1e-2
+            return float(num_warmup_steps - current_step) / float(max(1.0, num_warmup_steps))
+        return 1e-4
 
     return LambdaLR(optimizer, lr_lambda, last_epoch=last_epoch)
 
