@@ -55,7 +55,7 @@ class VGDiffDatabase(Dataset):
                 image = self.transform(image.convert('RGB'))
 
         if self.use_depth:
-            depth_path = f'/mnt/workfiles/MegaDepth/vg/{os.path.splitext(self.image_paths[index])[0].decode("utf-8")}.png '
+            depth_path = f'/mnt/workfiles/MegaDepth/vg/{os.path.splitext(self.image_paths[index])[0].decode("utf-8")}.png'
             with open(depth_path, 'rb') as f:
                 with PIL.Image.open(f) as depth:
                     depth = self.transform(depth.convert('L'))
