@@ -33,7 +33,6 @@ from diffusers.models.attention_processor import LoRAAttnProcessor
 from diffusers.optimization import get_scheduler
 from diffusers.utils import check_min_version, is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
-from examples.sg_to_image.train_sg_to_image_lora import parse_args
 from utils import ObjectDetectionMetrics, compute_average_precision
 
 from utils import ListDataset
@@ -41,6 +40,157 @@ from utils import interpolate
 
 import torch_fidelity
 from simsg import SGModel
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Simple example of a training script.")
+    parser.add_argument(
+        "--pretrained_model_name_or_path",
+        type=str,
+        default=None,
+        required=True,
+        help="Path to pretrained model or model identifier from huggingface.co/models.",
+    )
+    parser.add_argument(
+        "--dataset_name",
+        type=str,
+        default=None,
+        help=(
+            "The name of the Dataset (from the HuggingFace hub) to train on (could be your own, possibly private,"
+            " dataset). It can also be a path pointing to a local copy of a dataset in your filesystem,"
+            " or to a folder containing files that 🤗 Datasets can understand."
+        ),
+    )
+    parser.add_argument(
+        "--image_column", type=str, default="image", help="The column of the dataset containing an image."
+    )
+    parser.add_argument(
+        "--depth_column", type=str, default="depth", help="The column of the dataset containing the depth map."
+    )
+    parser.add_argument(
+        "--caption_column",
+        type=str,
+        default="objects_str",
+        help="The column of the dataset containing a caption or a list of captions.",
+    )
+    parser.add_argument(
+        "--triplets_column",
+        type=str,
+        default="triplets",
+        help="The column of the dataset containing the list of triplets",
+    )
+    parser.add_argument(
+        "--boxes_column",
+        type=str,
+        default="boxes",
+        help="The column of the dataset containing the list of bounding boxes of the objects",
+    )
+    parser.add_argument(
+        "--objects_column",
+        type=str,
+        default="objects",
+        help="The column of the dataset containing the list of the objects in the image",
+    )
+    parser.add_argument(
+        "--cond_place",
+        type=str,
+        default="attn",
+        choices=["latent", "attn"],
+        help="Where to append the condition",
+    )
+    parser.add_argument(
+        "--const_train_prompt", type=str, default="",
+        help="A prompt to be used constantly for training as a prefix to the caption."
+    )
+    parser.add_argument(
+        "--caption_type",
+        type=str,
+        default="none",
+        choices=["none", "const", "triplets", "objects"],
+        help=(
+            "Whether to disable captions during training. Check if you have something else to condition on, "
+            "like scene graphs. "
+        ),
+    )
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default="sd-model-finetuned-lora",
+        help="The output directory where the model predictions and checkpoints will be written.",
+    )
+    parser.add_argument(
+        "--cache_dir",
+        type=str,
+        default=None,
+        help="The directory where the downloaded models and datasets will be stored.",
+    )
+    parser.add_argument("--seed", type=int, default=None, help="A seed for reproducible training.")
+    parser.add_argument(
+        "--resolution",
+        type=int,
+        default=256,
+        help=(
+            "The resolution for input images, all the images in the train/validation dataset will be resized to this"
+            " resolution"
+        ),
+    )
+    parser.add_argument(
+        "--use_8bit_adam", action="store_true", help="Whether or not to use 8-bit Adam from bitsandbytes."
+    )
+    parser.add_argument(
+        "--allow_tf32",
+        action="store_true",
+        help=(
+            "Whether or not to allow TF32 on Ampere GPUs. Can be used to speed up training. For more information, see"
+            " https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices"
+        ),
+    )
+    parser.add_argument(
+        "--dataloader_num_workers",
+        type=int,
+        default=0,
+        help=(
+            "Number of subprocesses to use for data loading. 0 means that the data will be loaded in the main process."
+        ),
+    )
+    parser.add_argument("--vocab_json", type=str, default="mnt/students/vocab.json", help="The path to the vocab file.")
+    parser.add_argument(
+        "--mixed_precision",
+        type=str,
+        default=None,
+        choices=["no", "fp16", "bf16"],
+        help=(
+            "Whether to use mixed precision. Choose between fp16 and bf16 (bfloat16). Bf16 requires PyTorch >="
+            " 1.10.and an Nvidia Ampere GPU.  Default to the value of accelerate config of the current system or the"
+            " flag passed with the `accelerate.launch` command. Use this argument to override the accelerate config."
+        ),
+    )
+    parser.add_argument("--lora_rank", type=int, default=4, help="The rank of LoRA to use.")
+    parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
+    parser.add_argument(
+        "--enable_xformers_memory_efficient_attention", action="store_true", help="Whether or not to use xformers."
+    )
+    parser.add_argument(
+        "--shuffle_triplets", action="store_true", help="Whether or not to shuffle the triplets in the training set."
+    )
+    parser.add_argument("--noise_offset", type=float, default=0, help="The scale of noise offset.")
+    parser.add_argument(
+        "--sg_type",
+        type=str,
+        default='simsg',
+        choices=('simsg', 'sgnet'),
+        help="Type of sg encoder.",
+    )
+    args = parser.parse_args()
+    env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
+    if env_local_rank != -1 and env_local_rank != args.local_rank:
+        args.local_rank = env_local_rank
+
+    # Sanity checks
+    if args.dataset_name is None:
+        raise ValueError("Need a dataset name.")
+
+    return args
 
 
 def get_vg_config(split):
@@ -109,14 +259,20 @@ def main():
 
     accelerator = Accelerator(mixed_precision=args.mixed_precision)
 
+    weight_dtype = torch.float32
+    if accelerator.mixed_precision == "fp16":
+        weight_dtype = torch.float16
+    elif accelerator.mixed_precision == "bf16":
+        weight_dtype = torch.bfloat16
+
     unet = UNet2DConditionModel.from_pretrained(MODEL_ID, subfolder="unet")
     tokenizer = CLIPTokenizer.from_pretrained(MODEL_ID, subfolder="tokenizer")
     text_encoder = CLIPTextModel.from_pretrained(MODEL_ID, subfolder="text_encoder")
 
     unet = unet.requires_grad_(False)
     text_encoder = text_encoder.requires_grad_(False)
-    unet = unet.to(torch.device('cuda'), dtype=torch.float16)
-    text_encoder = text_encoder.to(torch.device('cuda'), dtype=torch.float16)
+    unet = unet.to(device, dtype=weight_dtype)
+    text_encoder = text_encoder.to(device, dtype=weight_dtype)
     if is_xformers_available():
         unet.enable_xformers_memory_efficient_attention()
 
@@ -143,7 +299,7 @@ def main():
     }
     sg_net = SGModel(**kwargs)
     sg_net.load_state_dict(torch.load(f'{PATH}/sg_encoder.pt'))
-
+    sg_net.to(device, dtype=weight_dtype)
     pipeline = StableDiffusionPipeline.from_pretrained(
         MODEL_ID,
         unet=accelerator.unwrap_model(unet),
