@@ -253,6 +253,7 @@ def main():
     MODEL_PATH = args.model_path
     PATH = f'/mnt/workfiles/exp/{MODEL_PATH}'
     OUTPUT_DIR = f'/mnt/workfiles/gens/{MODEL_PATH}'
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
     BSZ = args.batch_size
     RESOLUTION = args.resolution
     CENTER_CROP = True if '-cc' in MODEL_PATH else False
