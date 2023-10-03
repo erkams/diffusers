@@ -476,7 +476,7 @@ def main():
 
     generator = torch.Generator(device=device).manual_seed(args.seed)
 
-    for step, batch in tqdm(enumerate(loader)):
+    for step, batch in enumerate(tqdm(loader)):
         sg_embeds = batch["sg_embeds"].to(device)
 
         with accelerator.autocast():
