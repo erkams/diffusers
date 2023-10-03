@@ -35,8 +35,7 @@ from diffusers.utils import check_min_version, is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
 from utils import ObjectDetectionMetrics, compute_average_precision
 
-from utils import ListDataset
-from utils import interpolate
+from utils import ListEvalDataset
 
 import torch_fidelity
 from simsg import SGModel
@@ -149,6 +148,13 @@ def parse_args():
         help=(
             "Whether or not to allow TF32 on Ampere GPUs. Can be used to speed up training. For more information, see"
             " https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices"
+        ),
+    )
+    parser.add_argument(
+        "--skip_generation",
+        action="store_true",
+        help=(
+            "Skip generation and only calculate metrics."
         ),
     )
     parser.add_argument(
@@ -476,20 +482,21 @@ def main():
 
     generator = torch.Generator(device=device).manual_seed(args.seed)
 
-    for step, batch in enumerate(tqdm(loader)):
-        sg_embeds = batch["sg_embeds"].to(device)
+    if not args.skip_generation:
+        for step, batch in enumerate(tqdm(loader)):
+            sg_embeds = batch["sg_embeds"].to(device)
 
-        with accelerator.autocast():
-            images = pipeline(prompt_embeds=sg_embeds,
-                              height=RESOLUTION, width=RESOLUTION, num_inference_steps=200,
-                              generator=generator).images
-            print(len(images))
-            for i, image in enumerate(images):
-                image.save(os.path.join(OUTPUT_DIR, f"{step * BSZ + i}.png"))
+            with accelerator.autocast():
+                images = pipeline(prompt_embeds=sg_embeds,
+                                  height=RESOLUTION, width=RESOLUTION, num_inference_steps=200,
+                                  generator=generator).images
+                print(len(images))
+                for i, image in enumerate(images):
+                    image.save(os.path.join(OUTPUT_DIR, f"{step * BSZ + i}.png"))
 
     metrics = torch_fidelity.calculate_metrics(
         input1=OUTPUT_DIR,
-        input2=dataset,
+        input2=ListEvalDataset(dataset),
         cuda=True,
         isc=True,
         fid=True,

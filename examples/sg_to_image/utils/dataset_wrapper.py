@@ -70,3 +70,31 @@ class ListDataset(Dataset):
     
     def __len__(self):
         return len(self.imgs)
+
+
+class ListEvalDataset(Dataset):
+    """
+    Turn the list of images in torch tensor type into a torch dataset
+    """
+
+    def __init__(self, dataset, resolution=256, center_crop=False):
+        self.dataset = dataset
+        self.resolution = resolution
+        self.center_crop = center_crop
+
+    def __getitem__(self, idx):
+        img = self.dataset[idx]['image']
+        # if img is PIL image, convert to torch uint8 tensor
+        if isinstance(img, Image.Image):
+            assert img.size[0] == img.size[1]
+            im = transforms.ToTensor()(img)
+            # to torch.uint8
+            return (im * 255).to(torch.uint8)
+        elif isinstance(img, torch.Tensor):
+            assert img.size(1) == img.size(2)
+            if img.dtype != torch.uint8:
+                return (img * 255).to(torch.uint8)
+        return img
+
+    def __len__(self):
+        return len(self.dataset)
