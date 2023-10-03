@@ -145,9 +145,8 @@ def main():
     sg_net.load_state_dict(torch.load(f'{PATH}/sg_encoder.pt'))
 
     pipeline = StableDiffusionPipeline.from_pretrained(
-        args.pretrained_model_name_or_path,
+        MODEL_ID,
         unet=accelerator.unwrap_model(unet),
-        revision=args.revision,
         torch_dtype=torch.float32,
     )
 
@@ -155,11 +154,10 @@ def main():
     pipeline.set_progress_bar_config(disable=True)
     sg_net.eval()
 
-    sg_p = sum(p.numel() for p in sg_net.parameters())
-    lora_p = sum(p.numel() for p in lora_layers.parameters())
-    print(f'SGNet total parameters {sg_p / 1e6}M')
-    print(f'LoRA total parameters {lora_p / 1e6}M')
-    dataset_type = 'clevr' if 'clevr' in args.dataset_name else 'vg'
+    # sg_p = sum(p.numel() for p in sg_net.parameters())
+    # lora_p = sum(p.numel() for p in lora_layers.parameters())
+    # print(f'SGNet total parameters {sg_p / 1e6}M')
+    # print(f'LoRA total parameters {lora_p / 1e6}M')
 
     def prepare_sg_embeds(examples, is_train=True):
         if dataset_type == 'clevr':
@@ -222,7 +220,7 @@ def main():
             boxes = torch.tensor(boxes)
         boxes = boxes.to(device)
 
-        if not args.center_crop:
+        if not CENTER_CROP:
             return boxes
 
         boxes = boxes * torch.tensor([320, 240, 320, 240]).to(device) - torch.tensor(
