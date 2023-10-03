@@ -434,6 +434,12 @@ def main():
         examples["sg_embeds"] = prepare_sg_embeds(examples, is_train=False)
         return examples
 
+    def preprocess_val_fid(examples):
+        assert dataset_type == 'clevr', 'Only CLEVR dataset needs preprocess_val!'
+        imgs = [val_transforms(image.convert("RGB")) for image in
+                examples[image_column]]
+        return imgs
+
     def val_collate_fn(examples):
         assert dataset_type == 'clevr', 'Only CLEVR dataset needs collate_fn!'
         all_images = [example[image_column] for example in examples]
@@ -461,19 +467,19 @@ def main():
             DATASET_NAME,
             keep_in_memory=True
         )
-        dataset = dataset['test'].with_transform(preprocess_val)
+        dset = dataset['test'].with_transform(preprocess_val)
     elif dataset_type == 'vg':
         from simsg import VGDiffDatabase, get_collate_fn
-        dataset = VGDiffDatabase(**vg_configs['test'],
-                                 image_size=RESOLUTION,
-                                 max_samples=None,
-                                 use_depth=False)
+        dset = VGDiffDatabase(**vg_configs['test'],
+                              image_size=RESOLUTION,
+                              max_samples=None,
+                              use_depth=False)
         collate_fn = get_collate_fn(prepare_sg_embeds, tokenize_captions)
     else:
         raise ValueError(f"Dataset {DATASET_NAME} not supported. Supported datasets: clevr, vg")
 
     loader = torch.utils.data.DataLoader(
-        dataset,
+        dset,
         shuffle=False,
         collate_fn=val_collate_fn if dataset_type == 'clevr' else collate_fn,
         batch_size=BSZ,
@@ -494,9 +500,11 @@ def main():
                 for i, image in enumerate(images):
                     image.save(os.path.join(OUTPUT_DIR, f"{step * BSZ + i}.png"))
 
+    dset_gt = dataset['test'].with_transform(preprocess_val_fid) if dataset_type == 'clevr' else dset
+
     metrics = torch_fidelity.calculate_metrics(
         input1=OUTPUT_DIR,
-        input2=ListEvalDataset(dataset),
+        input2=dset_gt,
         cuda=True,
         isc=True,
         fid=True,
