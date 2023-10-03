@@ -48,6 +48,12 @@ def parse_args():
         "--pretrained_model_name_or_path",
         type=str,
         default=None,
+        help="Path to pretrained model or model identifier from huggingface.co/models.",
+    )
+    parser.add_argument(
+        "--model_path",
+        type=str,
+        default=None,
         required=True,
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
@@ -153,6 +159,14 @@ def parse_args():
             "Number of subprocesses to use for data loading. 0 means that the data will be loaded in the main process."
         ),
     )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=8,
+        help=(
+            "Number of samples to generate at once."
+        ),
+    )
     parser.add_argument("--vocab_json", type=str, default="mnt/students/vocab.json", help="The path to the vocab file.")
     parser.add_argument(
         "--mixed_precision",
@@ -185,11 +199,6 @@ def parse_args():
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if env_local_rank != -1 and env_local_rank != args.local_rank:
         args.local_rank = env_local_rank
-
-    # Sanity checks
-    if args.dataset_name is None:
-        raise ValueError("Need a dataset name.")
-
     return args
 
 
@@ -241,11 +250,11 @@ def main():
     objects_column = args.objects_column
 
     MODEL_ID = 'stabilityai/stable-diffusion-2'
-    MODEL_PATH = 'clevr/sg2im-128-bs-32-cc'
+    MODEL_PATH = args.model_path
     PATH = f'/mnt/workfiles/exp/{MODEL_PATH}'
     OUTPUT_DIR = f'/mnt/workfiles/gens/{MODEL_PATH}'
-    BSZ = 32
-    RESOLUTION = 256
+    BSZ = args.batch_size
+    RESOLUTION = args.resolution
     CENTER_CROP = True if '-cc' in MODEL_PATH else False
     dataset_type = 'clevr' if 'clevr' in PATH else 'vg'
     if dataset_type == 'clevr':
