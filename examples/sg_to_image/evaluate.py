@@ -167,6 +167,14 @@ def parse_args():
             "Number of samples to generate at once."
         ),
     )
+    parser.add_argument(
+        "--checkpoint",
+        type=int,
+        default=None,
+        help=(
+            "Checkpoint number to load from."
+        ),
+    )
     parser.add_argument("--vocab_json", type=str, default="mnt/students/vocab.json", help="The path to the vocab file.")
     parser.add_argument(
         "--mixed_precision",
@@ -252,6 +260,16 @@ def main():
     MODEL_ID = 'stabilityai/stable-diffusion-2'
     MODEL_PATH = args.model_path
     PATH = f'/mnt/workfiles/exp/{MODEL_PATH}'
+
+    if args.checkpoint is not None:
+        PATH = os.path.join(PATH, f'checkpoint-{args.checkpoint}')
+    else:
+        dirs = os.listdir(PATH)
+        dirs = [d for d in dirs if d.startswith("checkpoint")]
+        dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
+        path = dirs[-1] if len(dirs) > 0 else None
+        PATH = os.path.join(PATH, path)
+
     OUTPUT_DIR = f'/mnt/workfiles/gens/{MODEL_PATH}'
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     BSZ = args.batch_size
@@ -357,9 +375,9 @@ def main():
         all_objects = torch.cat(all_objects, dim=0).to(device)
         all_triplets = torch.cat(all_triplets, dim=0).to(device)
         all_boxes = torch.cat(all_boxes, dim=0).to(device)
-
-        embed = sg_net(all_triplets, all_objects, all_boxes, max_length=max_length,
-                       batch_size=BSZ)
+        with torch.no_grad():
+            embed = sg_net(all_triplets, all_objects, all_boxes, max_length=max_length,
+                           batch_size=BSZ)
 
         embeds = torch.split(embed, num_objs_per_image, dim=0)
 
