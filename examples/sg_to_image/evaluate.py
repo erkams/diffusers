@@ -500,11 +500,11 @@ def main():
                 for i, image in enumerate(images):
                     image.save(os.path.join(OUTPUT_DIR, f"{step * BSZ + i}.png"))
 
-    dset_gt = dataset['test'].with_transform(preprocess_val_fid) if dataset_type == 'clevr' else dset
+    gt = '/mnt/workfiles/datasets/clevr-cc-256/' if dataset_type == 'clevr' else '/mnt/workfiles/datasets/vg-256/'
 
     metrics = torch_fidelity.calculate_metrics(
         input1=OUTPUT_DIR,
-        input2=dset_gt,
+        input2=gt,
         cuda=True,
         isc=True,
         fid=True,
