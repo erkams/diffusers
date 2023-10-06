@@ -12,7 +12,7 @@ import json
 
 class VGDiffDatabase(Dataset):
     def __init__(self, vocab, h5_path, image_dir, image_size=256, max_objects=10, max_samples=None,
-                 include_relationships=True, use_orphaned_objects=True, use_depth=False):
+                 include_relationships=True, use_orphaned_objects=True, use_depth=False, enrich_sg=False):
 
         with open(vocab, 'r') as f:
             vocab = json.load(f)
@@ -25,14 +25,19 @@ class VGDiffDatabase(Dataset):
         self.max_samples = max_samples
         self.include_relationships = include_relationships
         self.use_depth = use_depth
+        self.enrich_sg = enrich_sg
 
         self.is_train = True if 'train' in h5_path else False
         if self.is_train:
-            transform = [Resize(self.image_size), transforms.ToTensor(), transforms.Normalize(0.5, 0.5)]  # augmentation
+            transform = [Resize(self.image_size), transforms.ToTensor(), transforms.Normalize(0.5, 0.5)]
         else:
             transform = [Resize(self.image_size), transforms.ToTensor()]
-        self.transform = transforms.Compose(transform)
 
+        depth_transform = [Resize(self.image_size), transforms.ToTensor()]
+
+        self.transform = transforms.Compose(transform)
+        self.depth_transform = transforms.Compose(depth_transform)
+        self.normalize = transforms.Normalize(0.5, 0.5)
         self.data = {}
         with h5py.File(h5_path, 'r', locking=False) as f:
             for k, v in f.items():
@@ -54,11 +59,11 @@ class VGDiffDatabase(Dataset):
                 WW, HH = image.size
                 image = self.transform(image.convert('RGB'))
 
-        if self.use_depth:
+        if self.use_depth or self.enrich_sg:
             depth_path = f'/mnt/workfiles/MegaDepth/vg/{os.path.splitext(self.image_paths[index])[0].decode("utf-8")}.png'
             with open(depth_path, 'rb') as f:
                 with PIL.Image.open(f) as depth:
-                    depth = self.transform(depth.convert('L'))
+                    depth = self.depth_transform(depth.convert('L'))
         # image = image * 2 - 1
 
         obj_idxs_with_rels = set()
@@ -107,9 +112,16 @@ class VGDiffDatabase(Dataset):
             s = obj_idx_mapping.get(s, None)
             o = obj_idx_mapping.get(o, None)
             if s is not None and o is not None:
-                triples.append([s, p, o])
+                # check if the list [s,p,o] is a duplicate in the triples list
+                if [s, p, o] not in triples:
+                    triples.append([s, p, o])
+
+        if self.enrich_sg:
+            extra_triples = enrich_scene_graph(objs, depth, boxes, triples, self.vocab)
+            triples += extra_triples
 
         in_image = self.vocab['pred_name_to_idx']['__in_image__']
+
         for i in range(O - 1):
             triples.append([i, in_image, O - 1])
 
@@ -123,7 +135,7 @@ class VGDiffDatabase(Dataset):
                'objects_str': objects_str}
 
         if self.use_depth:
-            out['depth'] = depth
+            out['depth'] = self.normalize(depth)
         return out
 
 
@@ -199,3 +211,161 @@ class Resize(object):
 
     def __call__(self, img):
         return img.resize(self.size, self.interp)
+
+
+people = ['man', 'woman', 'girl', 'lady', 'boy', 'child', 'person']
+
+clothes = ['shirt', 'pant', 'jean', 'jacket', 'helmet', 'short', 'coat', 'tie', 'sunglass', 'glasses', 'umbrella',
+           'headlight', 'hat', 'shoe', 'sock', 'boot', 'cap', 'glove']
+
+body_parts = ['head', 'hair', 'face', 'leg', 'hand', 'arm', 'ear', 'mouth', 'neck', 'foot', 'nose', 'finger', 'eye']
+
+valid_objects = ['sunglass', 'ball', 'headlight', 'eye', 'sock', 'stone', 'flag', 'boot', 'apple', 'mouth', 'glasses',
+                 'orange', 'pot', 'vehicle', 'glove', 'tie', 'finger', 'engine', 'post', 'brick', 'towel', 'cap', 'ski',
+                 'basket', 'wood', 'container', 'letter', 'book', 'edge', 'sink', 'kite', 'surfboard', 'plane', 'child',
+                 'sheep', 'lamp', 'skateboard', 'photo', 'wing', 'windshield', 'banana', 'nose', 'lady', 'pizza',
+                 'seat', 'ceiling', 'cup', 'bottle', 'shelf',
+                 'ocean', 'paper', 'frame', 'animal', 'curtain', 'truck', 'motorcycle', 'bird', 'foot', 'helmet',
+                 'sand', 'board', 'bear', 'cow', 'beach', 'clock', 'cabinet', 'counter', 'trunk', 'house', 'bed',
+                 'bike', 'box', 'bowl', 'cat', 'flower', 'neck', 'coat', 'mountain', 'hill', 'hat', 'wave', 'boat',
+                 'zebra', 'food', 'umbrella', 'plant', 'roof', 'dog', 'horse', 'elephant', 'rock', 'shoe', 'pillow',
+                 'picture', 'bench', 'glass', 'giraffe', 'jean', 'bus', 'train', 'track', 'bag', 'light', 'pole',
+                 'bush', 'people', 'girl', 'short', 'street', 'face', 'snow', 'sidewalk', 'ear', 'arm', 'background',
+                 'boy', 'plate', 'field', 'road', 'jacket', 'door', 'floor', 'chair', 'hand', 'fence', 'pant', 'water',
+                 'car', 'sign', 'cloud', 'leg', 'table', 'hair', 'woman', 'person', 'grass', 'head', 'ground', 'window',
+                 'sky', 'building', 'wall', 'shirt', 'tree', 'man']
+
+
+def compute_area(box):
+    """Compute the area of a bounding box."""
+    x1, y1, x2, y2 = box
+    return (x2 - x1) * (y2 - y1)
+
+
+def compute_mask(box, width, height):
+    """Compute a binary mask for a bounding box."""
+    x1, y1, x2, y2 = box
+    x1, y1, x2, y2 = int(x1 * width), int(y1 * height), int(x2 * width), int(y2 * height)
+
+    mask = torch.zeros(height, width)
+    mask[y1:y2, x1:x2] = 1
+    return mask
+
+
+def subtract_overlaps(boxes, width, height):
+    """Subtract overlapping regions from the bigger bounding boxes and maintain original indices."""
+
+    # Associate each box with its index and sort by area in descending order
+    indexed_boxes = list(enumerate(boxes))
+    indexed_boxes.sort(key=lambda x: compute_area(x[1]), reverse=True)
+
+    # Create masks for each bounding box
+    masks = [compute_mask(box, width, height) for box in boxes]
+
+    for i in range(len(indexed_boxes)):
+        for j in range(i + 1, len(indexed_boxes)):
+            idx_i, box_i = indexed_boxes[i]
+            idx_j, box_j = indexed_boxes[j]
+            masks[idx_i] -= masks[idx_j] * masks[idx_i]  # Subtract overlapping regions
+            masks[idx_i] = torch.clamp(masks[idx_i], 0, 1)  # Ensure the mask values are between 0 and 1
+
+    return masks
+
+
+def enrich_scene_graph(objects, depth_map, boxes, org_triplets, vocab):
+    avg_depths = []
+
+    depth_map = torch.clone(depth_map).squeeze()
+    h, w = depth_map.shape
+
+    masks = subtract_overlaps(boxes, w, h)
+
+    for mask in masks:
+        average_depth = (depth_map * mask).sum() / mask.sum()
+        avg_depths.append(average_depth)
+
+    # Associate each box with its index and sort by area in descending order
+    indexed_boxes = list(enumerate(boxes[:-1]))
+    indexed_boxes.sort(key=lambda x: compute_area(x[1]), reverse=True)
+    triplets = []
+
+    for i in range(len(indexed_boxes)):
+        idx_i, box_i = indexed_boxes[i]
+        if vocab['object_idx_to_name'][objects[idx_i]] not in valid_objects:
+            continue
+
+        cx_i = (box_i[0] + box_i[2]) / 2
+        cy_i = (box_i[1] + box_i[3]) / 2
+
+        is_i_cloth = vocab['object_idx_to_name'][objects[idx_i]] in clothes
+        is_i_organ = vocab['object_idx_to_name'][objects[idx_i]] in body_parts
+        if is_i_cloth or is_i_organ:
+            continue
+        for j in range(i + 1, len(indexed_boxes)):
+            idx_j, box_j = indexed_boxes[j]
+
+            if vocab['object_idx_to_name'][objects[idx_j]] not in valid_objects:
+                continue
+
+            cx_j = (box_j[0] + box_j[2]) / 2
+            cy_j = (box_j[1] + box_j[3]) / 2
+
+            if compute_area(box_j) < 1 / 100:
+                continue
+            mask_i, mask_j = compute_mask(box_i, w, h), compute_mask(box_j, w, h)
+            depth_i, depth_j = avg_depths[idx_i], avg_depths[idx_j]
+            is_j_cloth = vocab['object_idx_to_name'][objects[idx_j]] in clothes
+            is_j_organ = vocab['object_idx_to_name'][objects[idx_j]] in body_parts
+            is_i_human = vocab['object_idx_to_name'][objects[idx_i]] in people
+            if (is_j_cloth or is_j_organ) and not is_i_human:
+                continue
+
+            clothes_on_people = is_i_human and is_j_cloth
+            organs = is_i_human and is_j_organ
+
+            if clothes_on_people and depth_i - depth_j < 0.2 and (mask_i * mask_j).sum() > 0.95 * mask_j.sum():
+                triplets.append([idx_j, 1, idx_i])
+            if organs and depth_i - depth_j < 0.2 and (mask_i * mask_j).sum() > 0.95 * mask_j.sum():
+                triplets.append([idx_i, 3, idx_j])
+            if clothes_on_people or organs:
+                continue
+
+            if depth_j - depth_i < 0.02 and (mask_i * mask_j).sum() == mask_j.sum():
+                if vocab['object_idx_to_name'][objects[idx_i]] != 'sky' and vocab['object_idx_to_name'][objects[idx_j]] != 'sky':
+                    if vocab['object_idx_to_name'][objects[idx_j]] in people:
+                        triplets.append([idx_j, 2, idx_i])
+                    else:
+                        if vocab['object_idx_to_name'][objects[idx_j]] != vocab['object_idx_to_name'][objects[idx_i]]:
+                            triplets.append([idx_j, 1, idx_i])
+                            for triplet in triplets:
+                                if triplet[2] == idx_j:
+                                    triplets.remove(triplet)
+                    continue
+            if abs(depth_i - depth_j) < 0.06 and (mask_i * mask_j).sum() > 0.15 * mask_j.sum():
+                if abs(cy_j - cy_i) < 0.2 and abs(cx_j - cx_i) > 0.95 * (box_j[2] - box_j[0]) / 2:
+                    if vocab['object_idx_to_name'][objects[idx_i]] != 'sky' and vocab['object_idx_to_name'][objects[idx_j]] != 'sky':
+                        triplets.append([idx_j, 2, idx_i])
+                        continue
+                if cx_j > cx_i and abs(cy_j - cy_i) < 0.2:
+                    if vocab['object_idx_to_name'][objects[idx_i]] != 'sky' and vocab['object_idx_to_name'][objects[idx_j]] != 'sky':
+                        triplets.append([idx_j, 39, idx_i])
+                        continue
+                elif cx_i > cx_j and abs(cy_j - cy_i) < 0.2:
+                    if vocab['object_idx_to_name'][objects[idx_i]] != 'sky' and vocab['object_idx_to_name'][objects[idx_j]] != 'sky':
+                        triplets.append([idx_j, 18, idx_i])
+                        continue
+
+            if (mask_i * mask_j).sum() > 0.2 * mask_j.sum() and depth_i < depth_j:
+                triplets.append([idx_i, 19, idx_j])
+            if (mask_i * mask_j).sum() > 0.2 * mask_j.sum() and depth_i > depth_j:
+                for triplet in triplets:
+                    if triplet[2] == idx_i and triplet[1] == 25:
+                        if [triplet[0], 25, idx_j] in triplets:
+                            triplets.remove([triplet[0], 25, idx_j])
+                if vocab['object_idx_to_name'][objects[idx_i]] != 'sky' and vocab['object_idx_to_name'][objects[idx_j]] != 'sky':
+                    triplets.append([idx_i, 25, idx_j])
+    for triplet in triplets[:]:
+        if triplet in org_triplets.tolist():
+            triplets.remove(triplet)
+
+    return triplets
