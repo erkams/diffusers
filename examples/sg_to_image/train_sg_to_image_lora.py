@@ -472,6 +472,10 @@ def parse_args():
         help="Whether or not to use depth map to interpolate with the image for training"
     )
     parser.add_argument(
+        "--enrich_sg", action="store_true",
+        help="Whether or not to use extra triplets obtained from depth map to enrich the scene graphs"
+    )
+    parser.add_argument(
         "--skip_sanity", action="store_true", help="Whether or not to skip sanity check for val and eval steps."
     )
     args = parser.parse_args()
@@ -1047,7 +1051,8 @@ def main():
             k: VGDiffDatabase(**vg_configs[k],
                               image_size=args.resolution,
                               max_samples=args.max_train_samples if k == 'train' else None,
-                              use_depth=args.use_depth)
+                              use_depth=args.use_depth,
+                              enrich_sg=args.enrich_sg)
             for k in ['train', 'val', 'test']}
     else:
         raise ValueError(f"Dataset {args.dataset_name} not supported. Supported datasets: clevr, vg")

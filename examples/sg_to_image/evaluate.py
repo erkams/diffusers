@@ -281,6 +281,7 @@ def main():
     BSZ = args.batch_size
     RESOLUTION = args.resolution
     CENTER_CROP = True if '-cc' in MODEL_PATH else False
+    ENRICH_SG = True if '-esg' in MODEL_PATH else False
     dataset_type = 'clevr' if 'clevr' in PATH else 'vg'
     if dataset_type == 'clevr':
         vocab_json = '/mnt/workfiles/diffusers/examples/sg_to_image/vocab.json'
@@ -434,12 +435,6 @@ def main():
         examples["sg_embeds"] = prepare_sg_embeds(examples, is_train=False)
         return examples
 
-    def preprocess_val_fid(examples):
-        assert dataset_type == 'clevr', 'Only CLEVR dataset needs preprocess_val!'
-        imgs = [val_transforms(image.convert("RGB")) for image in
-                examples[image_column]]
-        return imgs
-
     def val_collate_fn(examples):
         assert dataset_type == 'clevr', 'Only CLEVR dataset needs collate_fn!'
         all_images = [example[image_column] for example in examples]
@@ -473,7 +468,8 @@ def main():
         dset = VGDiffDatabase(**vg_configs['test'],
                               image_size=RESOLUTION,
                               max_samples=None,
-                              use_depth=False)
+                              use_depth=False,
+                              enrich_sg=ENRICH_SG)
         collate_fn = get_collate_fn(prepare_sg_embeds, tokenize_captions)
     else:
         raise ValueError(f"Dataset {DATASET_NAME} not supported. Supported datasets: clevr, vg")

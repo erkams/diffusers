@@ -365,7 +365,7 @@ def enrich_scene_graph(objects, depth_map, boxes, org_triplets, vocab):
                 if vocab['object_idx_to_name'][objects[idx_i]] != 'sky' and vocab['object_idx_to_name'][objects[idx_j]] != 'sky':
                     triplets.append([idx_i, 25, idx_j])
     for triplet in triplets[:]:
-        if triplet in org_triplets.tolist():
+        if triplet in org_triplets:
             triplets.remove(triplet)
 
     return triplets
