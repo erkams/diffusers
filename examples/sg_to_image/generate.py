@@ -302,7 +302,7 @@ def main():
     # get the number from objects path, objects0.pkl is 0
     objects_path = args.objects
     objects_num = int(objects_path.split('.')[0][-1])
-    OUTPUT_DIR = f'/mnt/workfiles/custom/{objects_num}/{MODEL_PATH}'
+    OUTPUT_DIR = f'/mnt/workfiles/samples/custom/{objects_num}/{MODEL_PATH}'
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     RESOLUTION = args.resolution
 
