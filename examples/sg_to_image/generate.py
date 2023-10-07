@@ -283,10 +283,10 @@ def main():
 
     with open(f'/mnt/workfiles/samples/custom/{args.objects}', 'rb') as f:
         objects = pickle.load(f)
-        objects = torch.LongTensor(objects)
+        objects = torch.LongTensor(objects).unsqueeze(0)
     with open(f'/mnt/workfiles/samples/custom/{args.triplets}', 'rb') as f:
         triplets = pickle.load(f)
-        triplets = torch.LongTensor(triplets)
+        triplets = torch.LongTensor(triplets).unsqueeze(0)
 
     sample = {'objects': objects, 'triplets': triplets}
 
