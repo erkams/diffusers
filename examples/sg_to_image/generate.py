@@ -299,9 +299,10 @@ def main():
         path = dirs[-1] if len(dirs) > 0 else None
         PATH = os.path.join(PATH, path)
 
-    # get the number from objects path, objects0.pkl is 0
+    # get the number from objects path, objects{num}.pkl is num
     objects_path = args.objects
-    objects_num = int(objects_path.split('.')[0][-1])
+    objects_num = int(objects_path.split('.')[0].split('objects')[1])
+    print(f'Saving results to /mnt/workfiles/samples/custom/{objects_num}/{MODEL_PATH}')
     OUTPUT_DIR = f'/mnt/workfiles/samples/custom/{objects_num}/{MODEL_PATH}'
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     RESOLUTION = args.resolution
