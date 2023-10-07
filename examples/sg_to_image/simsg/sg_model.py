@@ -35,7 +35,7 @@ class SGModel(nn.Module):
                  gconv_pooling='avg', gconv_num_layers=5, mlp_normalization='none',
                  feat_dims=128, is_baseline=False, is_supervised=False,
                  feats_in_gcn=False, feats_out_gcn=True, 
-                 text_encoder=None, tokenizer=None, identity=False, reverse_triplets=False, **kwargs):
+                 text_encoder=None, tokenizer=None, identity=False, reverse_triplets=False, pass_preds=False, **kwargs):
 
         super(SGModel, self).__init__()
 
@@ -50,6 +50,8 @@ class SGModel(nn.Module):
         self.is_supervised = is_supervised
         self.identity = identity
         self.reverse_triplets = reverse_triplets
+        self.pass_preds = pass_preds
+
         # num_objs = len(vocab['object_idx_to_name'])
         # num_preds = len(vocab['pred_idx_to_name'])
         if tokenizer is None:
@@ -242,7 +244,8 @@ class SGModel(nn.Module):
         # sg_embed = F.interpolate(sg_embed.unsqueeze(0), size=(out_shape[-2], out_shape[-1]), mode='bilinear', align_corners=False)
         # sg_embed = sg_embed.squeeze(0)
         # sg_embed = torch.cat([sg_embed] * out_shape[1], dim=0)
-        
+        if self.pass_preds:
+            return obj_vecs, pred_vecs
         return obj_vecs 
 
     def prepare_keep_idx(self, evaluating, box_ones, num_images, obj_to_img, keep_box_idx,

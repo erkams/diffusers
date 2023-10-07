@@ -376,6 +376,9 @@ def parse_args():
         "--reverse_triplets", action="store_true", help="Whether or not to reverse subject and object in triplets"
     )
     parser.add_argument(
+        "--pass_preds", action="store_true", help="Whether or not to pass the predicates for the sg embed"
+    )
+    parser.add_argument(
         "--start_lora", type=int, default=0, help="Number of steps after to start the lora training."
     )
     parser.add_argument("--vocab_json", type=str, default="mnt/students/vocab.json", help="The path to the vocab file.")
@@ -560,6 +563,7 @@ def build_sg_encoder(args, tokenizer=None, text_encoder=None):
                 'text_encoder': text_encoder,
                 'identity': args.identity,
                 'reverse_triplets': args.reverse_triplets,
+                'pass_preds': args.pass_preds,
             }
             sg_net = SGModel(**kwargs)
             sg_net.train()
@@ -888,14 +892,27 @@ def main():
         else:
             embed = sg_net.encode_sg(all_triplets, all_objects, all_boxes, max_length=max_length,
                                      batch_size=args.train_batch_size)
+        if args.pass_preds:
+            obj_embeds = embed[0]
+            pred_embeds = embed[1]
+            pred_embeds = torch.split(pred_embeds, num_triplets_per_image, dim=0)
+            pred_embeds = [F.pad(e, (0, 0, 0, max_length[1] - e.shape[0])) for e in pred_embeds]
+            pred_embeds = torch.stack(pred_embeds, dim=0)
+        else:
+            obj_embeds = embed
 
-        embeds = torch.split(embed, num_objs_per_image, dim=0)
+        embeds = torch.split(obj_embeds, num_objs_per_image, dim=0)
 
         # pad embeds to max length
         embeds = [F.pad(e, (0, 0, 0, max_length[0] - e.shape[0])) for e in embeds]
         embeds = torch.stack(embeds, dim=0)
 
         assert embeds.shape == (len(examples[objects_column]), max_length[0], 1024)
+
+        if args.pass_preds:
+            all_embed = torch.cat([embeds, pred_embeds], dim=1)
+            assert all_embed.shape == (len(examples[objects_column]), max_length[0] + max_length[1], 1024)
+            return all_embed
 
         return embeds
 
