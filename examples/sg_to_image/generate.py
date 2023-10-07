@@ -281,10 +281,10 @@ def main():
     MODEL_PATH = args.model_path
     PATH = f'/mnt/workfiles/exp/{MODEL_PATH}'
 
-    with open(f'/mnt/workfiles/custom/{args.objects}', 'rb') as f:
+    with open(f'/mnt/workfiles/samples/custom/{args.objects}', 'rb') as f:
         objects = pickle.load(f)
         objects = torch.LongTensor(objects)
-    with open(f'/mnt/workfiles/custom/{args.triplets}', 'rb') as f:
+    with open(f'/mnt/workfiles/samples/custom/{args.triplets}', 'rb') as f:
         triplets = pickle.load(f)
         triplets = torch.LongTensor(triplets)
 
