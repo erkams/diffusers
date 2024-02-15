@@ -1680,6 +1680,9 @@ class DiffusionPipeline(ConfigMixin, PushToHubMixin):
             # optionally create a custom component <> custom file mapping
             custom_components = {}
             for component in folder_names:
+                if component in kwargs:
+                    continue
+                
                 module_candidate = config_dict[component][0]
 
                 if module_candidate is None or not isinstance(module_candidate, str):
